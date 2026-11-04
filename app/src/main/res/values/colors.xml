@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="libreta_blue">#FF1565C0</color>
+    <color name="libreta_blue_dark">#FF0D47A1</color>
+    <color name="libreta_blue_light">#FF90CAF9</color>
+    <color name="libreta_amber">#FFFFB300</color>
+    <color name="libreta_amber_light">#FFFFCA28</color>
+    <color name="on_shift">#FF2E7D32</color>
+    <color name="shift_stop">#FFC62828</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

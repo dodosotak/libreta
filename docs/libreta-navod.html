@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Libreta – sadzby a iPhone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* Layout: one readable column, two sections (owner's pay rules, drivers' iPhone guide), tables scroll on phones */
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --ink: #1b2430;
+    --muted: #5b6676;
+    --line: #dde2ea;
+    --accent: #c76a00;
+    --day: #e9f1fb;
+    --night: #1f2c44;
+    --night-ink: #e8eefb;
+    --font-display: "Archivo", "Segoe UI", Arial, sans-serif;
+    --font-body: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #12161d; --surface: #1a2029; --ink: #e7ebf2; --muted: #9aa5b5; --line: #2c3542;
+      --accent: #f0a043; --day: #1e2a3a; --night: #0b1220; --night-ink: #d6e0f5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #12161d; --surface: #1a2029; --ink: #e7ebf2; --muted: #9aa5b5; --line: #2c3542;
+    --accent: #f0a043; --day: #1e2a3a; --night: #0b1220; --night-ink: #d6e0f5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 var(--font-body); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 28px; }
+  h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+  h1 { font-size: 30px; font-weight: 800; }
+  h2 { font-size: 23px; font-weight: 800; }
+  h3 { font-size: 18px; font-weight: 600; }
+  p { margin: 0; max-width: 65ch; }
+  .lead { color: var(--muted); }
+  nav { display: flex; gap: 12px; flex-wrap: wrap; }
+  nav a { color: var(--accent); font-weight: 600; text-decoration: none; border-bottom: 2px solid var(--accent); }
+  nav a:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 24px 20px; display: grid; gap: 16px; }
+  .tag { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .rule { border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; }
+  .rule.day { background: var(--day); }
+  .rule.night { background: var(--night); color: var(--night-ink); }
+  .rule.part { border: 1px solid var(--line); }
+  .rule strong { font-family: var(--font-display); font-size: 16px; }
+  .rule .when { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 14px; color: var(--muted); font-weight: 600; }
+  td.sum { text-align: right; font-weight: 600; white-space: nowrap; }
+  th.sum { text-align: right; }
+  .pill { display: inline-block; font-size: 13px; font-weight: 600; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+  .pill.day { background: var(--day); color: var(--ink); border: 1px solid var(--line); }
+  .pill.night { background: var(--night); color: var(--night-ink); }
+  .note { font-size: 15px; color: var(--muted); }
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+  ol.steps li::before { content: counter(s); font-family: var(--font-display); font-weight: 800; width: 34px; height: 34px;
+    border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
+  .url { font-family: var(--font-display); font-weight: 600; background: var(--day); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .group { display: grid; gap: 10px; }
+  ul.plain { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+  .share-icon { display: inline-block; vertical-align: -3px; }
+</style>
+</head>
+<body>
+<main>
+  <header style="display:grid; gap:10px">
+    <h1>Libreta – sadzby a návod pre iPhone</h1>
+    <p class="lead">Prvá časť je pre majiteľa: ako aplikácia počíta sumy. Druhá časť je návod pre vodičov s iPhonom.</p>
+    <nav aria-label="Obsah">
+      <a href="#sadzby">Sadzby</a>
+      <a href="#iphone">Inštalácia na iPhone</a>
+    </nav>
+  </header>
+
+  <section id="sadzby" aria-labelledby="sadzby-h">
+    <span class="tag">Pre majiteľa</span>
+    <h2 id="sadzby-h">Ako sa počítajú sadzby</h2>
+    <p>O tom, či je smena denná alebo nočná, rozhoduje <strong>čas začiatku smeny</strong>, nie to, kedy skončí.</p>
+    <div class="rules">
+      <div class="rule day">
+        <strong>Zamestnanec – denná smena</strong>
+        <span class="when">začiatok 5:00 – 16:59</span>
+        <span>Pevná denná suma (fix), bez ohľadu na počet hodín a koniec smeny. Za jeden deň najviac raz.</span>
+      </div>
+      <div class="rule night">
+        <strong>Zamestnanec – nočná smena</strong>
+        <span class="when">začiatok 17:00 – 4:59</span>
+        <span>Každá hodina smeny nočnou sadzbou (€/h).</span>
+      </div>
+      <div class="rule part">
+        <strong>Brigádnik</strong>
+        <span class="when">kedykoľvek</span>
+        <span>Všetky hodiny jednou hodinovou sadzbou.</span>
+      </div>
+    </div>
+
+    <h3>Príklady</h3>
+    <p class="note">Zamestnanec s dennou sumou 110 € a nočnou sadzbou 10 €/h, brigádnik s 8 €/h.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Kto</th><th>Smena</th><th>Druh</th><th>Výpočet</th><th class="sum">Suma</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Zamestnanec</td><td>6:00 – 11:00</td><td><span class="pill day">denná</span></td><td>fix</td><td class="sum">110,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>6:00 – 17:00</td><td><span class="pill day">denná</span></td><td>fix</td><td class="sum">110,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>6:00 – 18:00</td><td><span class="pill day">denná</span></td><td>fix</td><td class="sum">110,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>14:00 – 20:00</td><td><span class="pill day">denná</span></td><td>fix</td><td class="sum">110,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>6:00 – 10:00 a 12:00 – 16:00 (ten istý deň)</td><td><span class="pill day">denná</span></td><td>fix raz za deň</td><td class="sum">110,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>22:00 – 6:00</td><td><span class="pill night">nočná</span></td><td>8 h × 10 €</td><td class="sum">80,00 €</td></tr>
+          <tr><td>Zamestnanec</td><td>5:00 – 13:00</td><td><span class="pill day">denná</span></td><td>fix</td><td class="sum">110,00 €</td></tr>          <tr><td>Zamestnanec</td><td>6:00 – 18:00 a 19:00 – 23:00 (ten istý deň)</td><td><span class="pill day">denná</span> <span class="pill night">nočná</span></td><td>fix + 4 h × 10 €</td><td class="sum">150,00 €</td></tr>
+          <tr><td>Brigádnik</td><td>14:00 – 20:00</td><td>—</td><td>6 h × 8 €</td><td class="sum">48,00 €</td></tr>
+          <tr><td>Brigádnik</td><td>22:00 – 6:00</td><td>—</td><td>8 h × 8 €</td><td class="sum">64,00 €</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Kde sa sadzby zadávajú</h3>
+    <ul class="plain">
+      <li>V aplikácii majiteľa: <strong>Vodiči</strong> → ťuknúť na vodiča → <strong>Upraviť vodiča</strong>.</li>
+      <li>Zamestnanec má polia <strong>Denná suma (fix)</strong> a <strong>Nočná smena €/h</strong>, brigádnik pole <strong>Hodinová sadzba</strong>.</li>
+      <li>Ak zamestnancovi chýba denná alebo nočná sadzba, aplikácia ukáže upozornenie a za tieto smeny počíta 0 €.</li>
+      <li>Pre účtovníčku sa naďalej osobitne vykazuje nočná práca 22:00–6:00, soboty, nedele, sviatky a nadčasy nad 8 h.</li>
+    </ul>
+  </section>
+
+  <section id="iphone" aria-labelledby="iphone-h">
+    <span class="tag">Pre vodičov</span>
+    <h2 id="iphone-h">Libreta na iPhone</h2>
+
+    <div class="group">
+      <h3>1. Inštalácia (iba raz)</h3>
+      <ol class="steps">
+        <li><span>V iPhone otvor <strong>Safari</strong> (nie Chrome) a choď na <span class="url">libreta-sklad.web.app</span></span></li>
+        <li><span>Dole ťukni na <strong>Zdieľať</strong>
+          <svg class="share-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/></svg>
+          (štvorček so šípkou hore).</span></li>
+        <li><span>Posuň sa nižšie, vyber <strong>Pridať na plochu</strong> a vpravo hore ťukni <strong>Pridať</strong>.</span></li>
+        <li><span>Na ploche pribudne ikona <strong>Libreta</strong>. Odteraz otváraj Libretu <strong>vždy cez túto ikonu</strong>, nie cez Safari.</span></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>2. Prihlásenie</h3>
+      <ol class="steps">
+        <li><span>Otvor Libretu z plochy.</span></li>
+        <li><span>Zadaj <strong>8-miestny kód</strong> od majiteľa a ťukni <strong>Pripojiť sa</strong>.</span></li>
+        <li><span>Pri prvom prihlásení vyplň svoje telefónne číslo.</span></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>3. Každý deň</h3>
+      <ul class="plain">
+        <li>Na začiatku práce ťukni <strong>▶ Začať smenu</strong>. Ak ideš s autom, vyber vozidlo a zadaj stav tachometra.</li>
+        <li>Na konci ťukni <strong>■ Ukončiť smenu</strong>. Ak si išiel s autom, zadaj km na konci.</li>
+        <li>Ak si zabudol začať smenu: <strong>✎ Doplniť zabudnutú smenu</strong> a vyplň deň a čas.</li>
+        <li>Dovolenka: <strong>Požiadať o dovolenku</strong>. Majiteľ ju schváli.</li>
+        <li>Dole vidíš svoje smeny a hodiny za mesiac. Šípkami ‹ › prepínaš mesiace.</li>
+      </ul>
+    </div>
+
+    <div class="group">
+      <h3>4. Keď niečo nejde</h3>
+      <ul class="plain">
+        <li><strong>Appka chce znova kód:</strong> zadaj ten istý kód od majiteľa. Prihlásiš sa aj bez toho, aby ťa majiteľ odpájal.</li>
+        <li><strong>Nový telefón:</strong> pridaj si Libretu na plochu podľa bodu 1 a zadaj svoj kód. Starý telefón sa odpojí sám.</li>
+        <li><strong>Zobrazí sa chyba:</strong> skontroluj internet. Ak chyba ostane, odfoť ju a pošli majiteľovi.</li>
+        <li><strong>Odhlásenie:</strong> menu <strong>⋮</strong> vpravo hore → <strong>Odhlásiť sa</strong>.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>

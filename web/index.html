@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Libreta</title>
+  <meta name="description" content="Libreta – zapisovanie smien pre šoférov">
+  <meta name="theme-color" content="#0b5cab">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Libreta">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <!-- Linking the phone with the code from the owner -->
+  <main id="join" class="screen join" hidden>
+    <img class="logo" src="icons/logo-white.png" alt="Libreta">
+    <p class="tagline">Evidencia hodín vodičov</p>
+
+    <section id="ios-hint" class="card hint" hidden>
+      <strong>Najprv si Libretu pridaj na plochu</strong>
+      <ol>
+        <li>Dole ťukni na <b>Zdieľať</b> (štvorček so šípkou).</li>
+        <li>Vyber <b>Pridať na plochu</b> a potvrď <b>Pridať</b>.</li>
+        <li>Otvor Libretu z plochy a tam zadaj kód.</li>
+      </ol>
+    </section>
+
+    <form id="join-form" class="card">
+      <h2>Som vodič</h2>
+      <label class="field">
+        <span>Kód od majiteľa (8 znakov)</span>
+        <input id="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9" required>
+      </label>
+      <button class="primary" type="submit">Pripojiť sa</button>
+      <p id="join-status" class="status" hidden></p>
+    </form>
+  </main>
+
+  <!-- The driver's own screen -->
+  <main id="main" class="screen" hidden>
+    <header class="topbar">
+      <h1 id="driver-name">Libreta</h1>
+      <button id="menu-button" class="icon-button" aria-label="Menu">⋮</button>
+      <div id="menu" class="menu" hidden>
+        <button id="profile-button">Môj profil</button>
+        <button id="logout-button">Odhlásiť sa</button>
+      </div>
+    </header>
+
+    <section class="status-block">
+      <p id="status" class="big-status"></p>
+      <p id="since" class="since"></p>
+      <button id="shift-button" class="shift-button start"></button>
+      <button id="vacation-button" class="vacation-button" hidden>🏖  Požiadať o dovolenku</button>
+      <button id="add-shift-button" class="vacation-button" hidden>✎  Doplniť zabudnutú smenu</button>
+      <p id="vacation-left" class="since"></p>
+      <p id="overdue" class="overdue" hidden>Smena beží už viac ako 12 hodín – nezabudol si ju ukončiť?</p>
+    </section>
+
+    <section class="month">
+      <div class="month-bar">
+        <button id="prev" class="icon-button" aria-label="Predchádzajúci mesiac">‹</button>
+        <h2 id="month-title"></h2>
+        <button id="next" class="icon-button" aria-label="Nasledujúci mesiac">›</button>
+      </div>
+      <div class="card summary">
+        <p id="total-hours" class="total"></p>
+        <p id="totals" class="totals"></p>
+        <p id="month-warning" class="warning" hidden></p>
+      </div>
+      <ul id="entries" class="entries"></ul>
+      <p id="empty" class="empty" hidden>V tomto mesiaci zatiaľ nič.</p>
+    </section>
+
+    <p id="offline" class="offline" hidden>Si offline – smeny sa odošlú po pripojení.</p>
+  </main>
+
+  <dialog id="dialog">
+    <form method="dialog" id="dialog-form">
+      <h3 id="dialog-title"></h3>
+      <p id="dialog-message" class="dialog-message"></p>
+      <div id="dialog-body"></div>
+      <p id="dialog-error" class="dialog-error" hidden></p>
+      <div class="dialog-buttons">
+        <button value="cancel" id="dialog-cancel" class="text" formnovalidate>Zrušiť</button>
+        <button value="ok" id="dialog-ok" class="primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

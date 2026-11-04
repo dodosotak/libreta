@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dialogs: rounded corners, bold title, primary-colored buttons. -->
+    <style name="ThemeOverlay.Libreta.Dialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearance.Libreta.Dialog</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/Libreta.DialogTitle</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Libreta.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Libreta.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Libreta.DialogButton</item>
+    </style>
+
+    <style name="ShapeAppearance.Libreta.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="Libreta.DialogTitle" parent="MaterialAlertDialog.MaterialComponents.Title.Text">
+        <item name="android:textStyle">bold</item>
+        <item name="android:textSize">20sp</item>
+    </style>
+
+    <style name="Libreta.DialogButton" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- Buttons and text fields: softer corners. -->
+    <style name="ShapeAppearance.Libreta.Small" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerSize">12dp</item>
+    </style>
+
+    <style name="Libreta.ButtonText" parent="TextAppearance.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+</resources>

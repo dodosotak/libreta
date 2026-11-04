@@ -1,0 +1,175 @@
+package sk.libreta.app
+
+import java.time.Duration
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+enum class WorkerType(val label: String, val plural: String) {
+    EMPLOYEE("Zamestnanec", "Zamestnanci"),
+    PART_TIME("Brigádnik", "Brigádnici"),
+}
+
+data class Driver(
+    val id: String = "",
+    val name: String,
+    val type: WorkerType,
+    /** Part-time workers (brigádnici): every hour is paid at this rate. */
+    val hourlyRate: Double,
+    /** Employees: a fixed sum for each day with a day shift (started 5:00–16:59), however many hours ([Payroll.dayShiftDays]). */
+    val dayRate: Double? = null,
+    /** Employees: rate per hour of the night shift (started 17:00–4:59). */
+    val nightRate: Double? = null,
+    val active: Boolean = true,
+    /** Firebase user of the driver's phone; null until the driver enters [joinCode] in the app. */
+    val uid: String? = null,
+    val joinCode: String = "",
+    /** Filled in by the driver in their profile (or by the owner). */
+    val phone: String = "",
+    /** Contract hours per week (úväzok); the monthly fund of working time is derived from it. */
+    val weeklyHours: Double = 40.0,
+    /** Vacation days per calendar year (nárok). */
+    val vacationPerYear: Int = 20,
+    /** Vacation days left after [vacationAsOf], copied from the last payslip; null = only [vacationPerYear] from 1 January. */
+    val vacationBalance: Double? = null,
+    val vacationAsOf: LocalDate? = null,
+) {
+    /** Hours of one working day under the contract, e.g. 4 h for a 20 h week. */
+    val dailyMinutes: Long get() = Math.round(weeklyHours * 60 / 5)
+
+    /** "8,00 €/h" for a part-time worker, "deň 110,00 € · noc 10,00 €/h" for an employee. */
+    val rateText: String
+        get() = when {
+            type == WorkerType.PART_TIME -> "${Fmt.money(hourlyRate)} €/h"
+            dayRate == null && nightRate == null -> "sadzba nezadaná"
+            else -> "deň ${dayRate?.let(Fmt::money) ?: "–"} € · noc ${nightRate?.let(Fmt::money) ?: "–"} €/h"
+        }
+
+    /** Employees whose day or night rate is missing would be paid 0 for those hours. */
+    val rateMissing: Boolean get() = type == WorkerType.EMPLOYEE && (dayRate == null || nightRate == null)
+
+    /** Workers on an agreement (dohoda) have no paid vacation. */
+    val hasVacation: Boolean get() = type == WorkerType.EMPLOYEE
+}
+
+data class Vehicle(
+    val id: String = "",
+    /** License plate (ŠPZ), e.g. "BA123AB". */
+    val plate: String,
+    val name: String = "",
+    val active: Boolean = true,
+) {
+    val label: String get() = if (name.isBlank()) plate else "$plate · $name"
+}
+
+enum class AbsenceType(val label: String) {
+    VACATION("Dovolenka"),
+    SICK("PN"),
+    CARE("OČR"),
+    COMP_OFF("Náhradné voľno"),
+    UNPAID("Neplatené voľno"),
+}
+
+enum class AbsenceStatus(val label: String) {
+    PENDING("čaká na schválenie"),
+    APPROVED("schválená"),
+    REJECTED("zamietnutá"),
+}
+
+/**
+ * A day range (inclusive) when the driver did not work. The owner enters it directly (approved),
+ * or the driver asks for a vacation from the phone and the owner approves or rejects the request.
+ */
+data class Absence(
+    val id: String = "",
+    val driverId: String,
+    val type: AbsenceType,
+    val from: LocalDate,
+    val to: LocalDate,
+    val note: String = "",
+    val status: AbsenceStatus = AbsenceStatus.APPROVED,
+) {
+    /** Only approved absences count in reports and the vacation balance. */
+    val approved: Boolean get() = status == AbsenceStatus.APPROVED
+
+    /** Working days (Mon–Fri, not a public holiday) of this absence that fall into [month]. */
+    fun workingDaysIn(month: YearMonth): Int = workingDaysBetween(month.atDay(1), month.atEndOfMonth())
+
+    /** Working days of this absence between [first] and [last] (inclusive). */
+    fun workingDaysBetween(first: LocalDate, last: LocalDate): Int = Payroll.workingDays(maxOf(from, first), minOf(to, last))
+
+    val workingDays: Int get() = Payroll.workingDays(from, to)
+}
+
+data class Shift(
+    val id: String = "",
+    val driverId: String,
+    val start: LocalDateTime,
+    val end: LocalDateTime?,
+    val note: String = "",
+    /** Server time when the driver's phone recorded the start/end; null for times entered by the owner. */
+    val startLoggedAt: LocalDateTime? = null,
+    val endLoggedAt: LocalDateTime? = null,
+    /** License plate of the vehicle driven, "" if none. */
+    val vehicle: String = "",
+    val kmStart: Int? = null,
+    val kmEnd: Int? = null,
+    /** Server time when the driver added this past shift afterwards from the phone; null for shifts started/ended live or by the owner. */
+    val enteredAt: LocalDateTime? = null,
+) {
+    /** The driver entered the whole shift afterwards (forgot to start it) – worth a look by the owner. */
+    val addedLater: Boolean get() = enteredAt != null
+
+    /** Worked minutes from start to end (breaks are not counted); 0 while the shift is still running. */
+    val workedMinutes: Long
+        get() = end?.let { maxOf(0, Duration.between(start, it).toMinutes()) } ?: 0
+
+    /** Shifts running longer than this are probably forgotten. */
+    fun isOverdue(now: LocalDateTime) = end == null && minutesSoFar(now) >= OVERDUE_MINUTES
+
+    val km: Int?
+        get() = if (kmStart != null && kmEnd != null && kmEnd >= kmStart) kmEnd - kmStart else null
+
+    companion object {
+        const val OVERDUE_MINUTES = 12 * 60L
+    }
+
+    /** The driver's phone time differs from the server time by more than 15 minutes – worth a look by the owner. */
+    val loggedLate: Boolean
+        get() = differs(start, startLoggedAt) || differs(end, endLoggedAt)
+
+    fun minutesSoFar(now: LocalDateTime): Long = maxOf(0, Duration.between(start, now).toMinutes())
+
+    private fun differs(time: LocalDateTime?, logged: LocalDateTime?) =
+        time != null && logged != null && Math.abs(Duration.between(time, logged).toMinutes()) > 15
+}
+
+object Fmt {
+    val SK: Locale = Locale.forLanguageTag("sk-SK")
+    val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+    val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("d.M.yyyy")
+    val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d.M.", SK)
+
+    /** 510 -> "8:30" */
+    fun hm(minutes: Long) = "%d:%02d".format(minutes / 60, minutes % 60)
+
+    /** 510 -> "8,50" */
+    fun hours(minutes: Long): String = String.format(SK, "%.2f", minutes / 60.0)
+
+    fun money(value: Double): String = String.format(SK, "%.2f", value)
+
+    /** 40.0 -> "40", 37.5 -> "37,5" */
+    fun decimal(value: Double): String =
+        if (value % 1.0 == 0.0) value.toLong().toString() else String.format(SK, "%.2f", value).trimEnd('0')
+
+    /** Slovak plural: 1 deň, 2 dni, 5 dní. */
+    fun count(n: Int, one: String, few: String, many: String) = "$n " + when (n) {
+        1 -> one
+        in 2..4 -> few
+        else -> many
+    }
+
+    fun month(month: YearMonth): String = month.format(DateTimeFormatter.ofPattern("LLLL yyyy", SK))
+}

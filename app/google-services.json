@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "37346689865",
+    "project_id": "libreta-sklad",
+    "storage_bucket": "libreta-sklad.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:37346689865:android:6ca799c27af2d2e8be1098",
+        "android_client_info": {
+          "package_name": "sk.libreta.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB4Usmhdu7S1RCyz9Xk86QEAyvzeDbRA54"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
