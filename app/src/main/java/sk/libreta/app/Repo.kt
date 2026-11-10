@@ -28,7 +28,9 @@ import java.time.temporal.ChronoUnit
 /**
  * Shared Firestore storage (project libreta-sklad). Layout:
  * drivers/{id}, drivers/{id}/shifts/{id}, drivers/{id}/absences/{id} (also the drivers' vacation requests), joinCodes/{code} -> driverId,
- * vehicles/{id}, closures/{yyyy-MM} (locked months), owners/{uid}, accountants/{uid}.
+ * vehicles/{id}, deliveries/{id} (the day's deliveries all drivers share), locations/{driverId} (last sent position),
+ * links/{uid} -> driverId (which driver a phone is), closures/{yyyy-MM} (locked months),
+ * owners/{uid}, accountants/{uid}.
  * Firestore caches locally, so writes made offline appear immediately and sync later.
  * Times are local "yyyy-MM-ddTHH:mm" strings (dates "yyyy-MM-dd") so they sort and range-query as text.
  */
@@ -313,8 +315,9 @@ object Repo {
     // ---- driver's phone ----
 
     /** The driver's profile; the rules let a driver change only this field of their record. */
-    fun savePhone(driverId: String, phone: String) {
-        drivers.document(driverId).update("phone", phone).addOnFailureListener(::report)
+    fun savePhone(driver: Driver, phone: String) {
+        drivers.document(driver.id).update("phone", phone).addOnFailureListener(::report)
+        if (driver.active) saveContact(driver.id, driver.name, phone)
     }
 
     /** Unlinks this phone from the driver before signing out, so the join code works again without the owner. */
@@ -456,7 +459,201 @@ object Repo {
         shiftsOf(shift.driverId).document(shift.id).delete().addOnFailureListener(::report)
     }
 
+    // ---- deliveries ----
+
+    private val deliveries get() = db.collection("deliveries")
+
+    fun listenDeliveries(date: LocalDate, onChange: (List<Delivery>) -> Unit): ListenerRegistration =
+        deliveries.whereEqualTo("date", date.toString()).addSnapshotListener { snap, e ->
+            if (e != null) return@addSnapshotListener listenFailed(e)
+            onChange(snap!!.documents.mapNotNull(::toDelivery).sortedBy { it.order })
+        }
+
+    /** Deliveries not delivered yet, of any day – drivers also see ones left over from an earlier day. */
+    fun listenUnfinishedDeliveries(onChange: (List<Delivery>) -> Unit): ListenerRegistration =
+        deliveries.whereIn("status", listOf(DeliveryStatus.OPEN.name, DeliveryStatus.IN_PROGRESS.name)).addSnapshotListener { snap, e ->
+            if (e != null) return@addSnapshotListener listenFailed(e)
+            onChange(snap!!.documents.mapNotNull(::toDelivery))
+        }
+
+    /** The owner's entry; editing keeps who has it and its status ([setDeliveryStatus] changes those). */
+    fun saveDelivery(delivery: Delivery) {
+        val data = mapOf(
+            "date" to delivery.date.toString(),
+            "title" to delivery.title,
+            "place" to delivery.place,
+            "note" to delivery.note,
+        )
+        val task = if (delivery.id.isEmpty()) {
+            deliveries.add(
+                data + mapOf(
+                    "order" to System.currentTimeMillis(), "status" to DeliveryStatus.OPEN.name,
+                    "driverId" to null, "driverName" to null, "takenAt" to null, "doneAt" to null,
+                )
+            )
+        } else {
+            deliveries.document(delivery.id).update(data)
+        }
+        task.addOnFailureListener(::report)
+    }
+
+    /** The owner's correction: back to free (nobody has it), or marked delivered. */
+    fun setDeliveryStatus(delivery: Delivery, status: DeliveryStatus) {
+        val data = when (status) {
+            DeliveryStatus.OPEN -> mapOf("status" to status.name, "driverId" to null, "driverName" to null, "takenAt" to null, "doneAt" to null)
+            DeliveryStatus.DONE -> mapOf("status" to status.name, "doneAt" to FieldValue.serverTimestamp())
+            DeliveryStatus.IN_PROGRESS -> mapOf("status" to status.name, "doneAt" to null)
+        }
+        deliveries.document(delivery.id).update(data).addOnFailureListener(::report)
+    }
+
+    fun deleteDelivery(delivery: Delivery) {
+        deliveries.document(delivery.id).delete().addOnFailureListener(::report)
+    }
+
+    /**
+     * The driver takes a free delivery. A transaction, so two drivers tapping at once can't both get it:
+     * [onResult] gets null when it's theirs, otherwise a text for the driver (taken by someone else, offline…).
+     */
+    fun takeDelivery(delivery: Delivery, driver: Driver, onResult: (String?) -> Unit) {
+        val ref = deliveries.document(delivery.id)
+        db.runTransaction { t ->
+            val current = toDelivery(t.get(ref)) ?: return@runTransaction "Zásielku medzitým majiteľ odstránil."
+            if (current.status != DeliveryStatus.OPEN) {
+                return@runTransaction if (current.driverId == driver.id) null
+                else "Túto zásielku už vzal ${current.driverName ?: "iný vodič"}."
+            }
+            t.update(
+                ref, mapOf(
+                    "status" to DeliveryStatus.IN_PROGRESS.name, "driverId" to driver.id, "driverName" to driver.name,
+                    "takenAt" to FieldValue.serverTimestamp(),
+                )
+            )
+            null
+        }
+            .addOnSuccessListener { onResult(it) }
+            .addOnFailureListener { e ->
+                Log.w("Libreta", "takeDelivery", e)
+                // Another driver got it a moment earlier: the server refuses the write (no retry) – say who has it.
+                val offline = "Zásielku sa nepodarilo vziať. Si pripojený na internet?"
+                ref.get(Source.SERVER)
+                    .addOnSuccessListener { snap ->
+                        val current = toDelivery(snap)
+                        onResult(
+                            if (current != null && current.status != DeliveryStatus.OPEN && current.driverId != driver.id) {
+                                "Túto zásielku už vzal ${current.driverName ?: "iný vodič"}."
+                            } else {
+                                offline
+                            }
+                        )
+                    }
+                    .addOnFailureListener { onResult(offline) }
+            }
+    }
+
+    /** The driver delivered it; everyone sees it done. */
+    fun finishDelivery(delivery: Delivery) {
+        deliveries.document(delivery.id)
+            .update(mapOf("status" to DeliveryStatus.DONE.name, "doneAt" to FieldValue.serverTimestamp()))
+            .addOnFailureListener(::report)
+    }
+
+    /** The driver gives a delivery back (took the wrong one), so another driver can take it. */
+    fun releaseDelivery(delivery: Delivery) {
+        deliveries.document(delivery.id)
+            .update(mapOf("status" to DeliveryStatus.OPEN.name, "driverId" to null, "driverName" to null, "takenAt" to null))
+            .addOnFailureListener(::report)
+    }
+
+    // ---- drivers' locations ----
+
+    private val locations get() = db.collection("locations")
+
+    /**
+     * Records which driver this phone belongs to (links/{uid}), so the rules let it see the other drivers' locations.
+     * [onDone] true once the server has it (also when it was there already), false when it failed.
+     */
+    fun linkPhone(driverId: String, onDone: (Boolean) -> Unit = {}) {
+        val uid = auth.currentUser?.uid ?: return onDone(false)
+        db.collection("links").document(uid).set(mapOf("driverId" to driverId))
+            .addOnSuccessListener { onDone(true) }
+            .addOnFailureListener { e -> Log.w("Libreta", "linkPhone", e); onDone(false) }
+    }
+
+    fun listenLocations(onChange: (List<DriverLocation>) -> Unit): ListenerRegistration =
+        locations.addSnapshotListener { snap, e ->
+            if (e != null) return@addSnapshotListener report(e)
+            onChange(snap!!.documents.mapNotNull(::toLocation))
+        }
+
+    /** Sends the driver's current position; everyone with access sees it at once (the time is the server's). */
+    fun shareLocation(driver: Driver, lat: Double, lng: Double, accuracy: Double) {
+        locations.document(driver.id).set(
+            mapOf("name" to driver.name, "lat" to lat, "lng" to lng, "accuracy" to accuracy, "at" to FieldValue.serverTimestamp())
+        ).addOnFailureListener(::report)
+    }
+
+    fun deleteLocation(driverId: String) {
+        locations.document(driverId).delete().addOnFailureListener(::report)
+    }
+
+    // ---- phone list (contacts/{driverId}, contacts/owner) ----
+
+    private val contacts get() = db.collection("contacts")
+
+    fun listenContacts(onChange: (List<Contact>) -> Unit): ListenerRegistration =
+        contacts.addSnapshotListener { snap, e ->
+            if (e != null) return@addSnapshotListener report(e)
+            onChange(snap!!.documents.map { Contact(it.id, it.getString("name").orEmpty(), it.getString("phone").orEmpty()) })
+        }
+
+    /** The driver's own entry (the owner's app writes any); a blank number removes it from the list. */
+    fun saveContact(id: String, name: String, phone: String) {
+        val task = if (phone.isBlank() && id != Contact.OWNER) contacts.document(id).delete()
+        else contacts.document(id).set(mapOf("name" to name, "phone" to phone.trim()))
+        task.addOnFailureListener { e -> Log.w("Libreta", "saveContact", e) }
+    }
+
+    /**
+     * The owner's app keeps the list in line with the driver records: active drivers with a number are in it, the others
+     * not. Writes only what differs from [current].
+     */
+    fun syncContacts(drivers: List<Driver>, current: List<Contact>) {
+        val wanted = drivers.filter { it.active && it.phone.isNotBlank() }.associate { it.id to Contact(it.id, it.name, it.phone.trim()) }
+        val have = current.associateBy { it.id }
+        wanted.values.filter { have[it.id] != it }.forEach { saveContact(it.id, it.name, it.phone) }
+        have.keys.filter { it != Contact.OWNER && it !in wanted }.forEach { contacts.document(it).delete() }
+    }
+
     // ---- mapping ----
+
+    private fun toLocation(doc: DocumentSnapshot): DriverLocation? = runCatching {
+        DriverLocation(
+            driverId = doc.id,
+            name = doc.getString("name").orEmpty(),
+            lat = doc.getDouble("lat")!!,
+            lng = doc.getDouble("lng")!!,
+            accuracy = doc.getDouble("accuracy") ?: 0.0,
+            // Estimated while the write is pending, so the own new position shows "práve teraz" at once.
+            at = doc.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toLocal(),
+        )
+    }.getOrNull()
+
+    private fun toDelivery(doc: DocumentSnapshot): Delivery? = runCatching {
+        Delivery(
+            id = doc.id,
+            date = LocalDate.parse(doc.getString("date")),
+            title = doc.getString("title").orEmpty(),
+            place = doc.getString("place").orEmpty(),
+            note = doc.getString("note").orEmpty(),
+            order = doc.getLong("order") ?: 0,
+            status = DeliveryStatus.valueOf(doc.getString("status") ?: DeliveryStatus.OPEN.name),
+            driverId = doc.getString("driverId"),
+            driverName = doc.getString("driverName"),
+            takenAt = doc.getTimestamp("takenAt")?.toLocal(),
+            doneAt = doc.getTimestamp("doneAt")?.toLocal(),
+        )
+    }.getOrNull()
 
     private fun now() = LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES)
 

@@ -59,6 +59,104 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
+    // Deliveries of a day (date "yyyy-MM-dd"), entered by the owner before the shift. All drivers see them:
+    // a driver takes a free one (OPEN -> IN_PROGRESS, own driverId and name), marks it delivered (-> DONE)
+    // or gives it back (-> OPEN). Only the owner edits or deletes them.
+    match /deliveries/{deliveryId} {
+      allow read: if signedIn();
+      allow write: if isOwner();
+
+      function linkedDriver(id) {
+        let d = get(/databases/$(database)/documents/drivers/$(id)).data;
+        return d.uid == request.auth.uid && d.active == true;
+      }
+
+      function changes(keys) {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+      }
+
+      allow update: if signedIn() && resource.data.status == 'OPEN'
+        && changes(['status', 'driverId', 'driverName', 'takenAt'])
+        && request.resource.data.status == 'IN_PROGRESS'
+        && request.resource.data.driverId is string
+        && linkedDriver(request.resource.data.driverId)
+        && request.resource.data.driverName == get(/databases/$(database)/documents/drivers/$(request.resource.data.driverId)).data.name
+        && request.resource.data.takenAt == request.time;
+      allow update: if signedIn() && resource.data.status == 'IN_PROGRESS'
+        && linkedDriver(resource.data.driverId)
+        && changes(['status', 'doneAt'])
+        && request.resource.data.status == 'DONE'
+        && request.resource.data.doneAt == request.time;
+      allow update: if signedIn() && resource.data.status == 'IN_PROGRESS'
+        && linkedDriver(resource.data.driverId)
+        && changes(['status', 'driverId', 'driverName', 'takenAt'])
+        && request.resource.data.status == 'OPEN'
+        && request.resource.data.driverId == null
+        && request.resource.data.driverName == null
+        && request.resource.data.takenAt == null;
+    }
+
+    // Which driver record this phone (anonymous uid) belongs to – written by the phone itself, so the rules can tell a
+    // linked driver from any other anonymous sign-in without knowing the driver's id (used for the locations below).
+    match /links/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['driverId'])
+        && request.resource.data.driverId is string
+        && get(/databases/$(database)/documents/drivers/$(request.resource.data.driverId)).data.uid == uid;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // This phone is linked to an active driver (checked against the driver record, so a stale link doesn't count).
+    function isActiveDriverPhone() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/links/$(request.auth.uid))
+        && linkedRecord().uid == request.auth.uid
+        && linkedRecord().active == true;
+    }
+
+    function linkedRecord() {
+      return get(/databases/$(database)/documents/drivers/$(
+        get(/databases/$(database)/documents/links/$(request.auth.uid)).data.driverId)).data;
+    }
+
+    // The driver's last sent position (one per driver, sent by a tap – no tracking in the background).
+    // Seen by the owner and the other active drivers, not by the accountant. The driver may delete it.
+    match /locations/{driverId} {
+      function ownPhone() {
+        let d = get(/databases/$(database)/documents/drivers/$(driverId)).data;
+        return signedIn() && d.uid == request.auth.uid && d.active == true;
+      }
+
+      allow read: if isOwner() || isActiveDriverPhone();
+      allow create, update: if ownPhone()
+        && request.resource.data.keys().hasOnly(['name', 'lat', 'lng', 'accuracy', 'at'])
+        && request.resource.data.name == get(/databases/$(database)/documents/drivers/$(driverId)).data.name
+        && request.resource.data.lat is number && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+        && request.resource.data.lng is number && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
+        && request.resource.data.accuracy is number && request.resource.data.accuracy >= 0
+        && request.resource.data.at == request.time;
+      allow delete: if isOwner()
+        || (signedIn() && get(/databases/$(database)/documents/drivers/$(driverId)).data.uid == request.auth.uid);
+    }
+
+    // Phone list for calling from "Polohy vodičov": only name and number (the driver records hold pay, drivers can't
+    // read those). contacts/owner is the boss's number; contacts/{driverId} is kept in sync by the owner's app and by the
+    // driver's own phone when the number is saved. Seen by the owner and the active drivers, not by the accountant.
+    match /contacts/{id} {
+      allow read: if isOwner() || isActiveDriverPhone();
+      allow write: if isOwner();
+      allow create, update: if signedIn() && id != 'owner'
+        && get(/databases/$(database)/documents/drivers/$(id)).data.uid == request.auth.uid
+        && get(/databases/$(database)/documents/drivers/$(id)).data.active == true
+        && request.resource.data.keys().hasOnly(['name', 'phone'])
+        && request.resource.data.name == get(/databases/$(database)/documents/drivers/$(id)).data.name
+        && request.resource.data.phone is string && request.resource.data.phone.size() <= 30;
+      // The driver clears the number in the profile.
+      allow delete: if signedIn() && id != 'owner'
+        && get(/databases/$(database)/documents/drivers/$(id)).data.uid == request.auth.uid;
+    }
+
     match /joinCodes/{code} {
       allow get: if signedIn();
       allow list: if isOffice();

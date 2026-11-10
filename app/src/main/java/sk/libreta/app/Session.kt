@@ -28,6 +28,7 @@ object Session {
     }
 
     fun signOut(activity: Activity) {
+        LocationService.stop(activity)
         FirebaseAuth.getInstance().signOut()
         prefs(activity).edit().clear().apply()
         activity.startActivity(

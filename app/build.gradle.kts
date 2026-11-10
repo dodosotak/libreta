@@ -20,8 +20,8 @@ android {
         applicationId = "sk.libreta.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 10
+        versionName = "1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

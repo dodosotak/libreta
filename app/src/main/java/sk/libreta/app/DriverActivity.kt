@@ -52,6 +52,9 @@ class DriverActivity : AppCompatActivity() {
     private lateinit var since: TextView
     private lateinit var button: MaterialButton
     private lateinit var vacationButton: MaterialButton
+    private lateinit var deliveriesButton: MaterialButton
+    /** Deliveries not delivered yet (all days), for the count on the button. */
+    private var unfinishedDeliveries = emptyList<Delivery>()
     private lateinit var addShiftButton: MaterialButton
     private lateinit var summary: View
 
@@ -65,6 +68,35 @@ class DriverActivity : AppCompatActivity() {
         }
     }
 
+    private var askedForLocation = false
+
+    private val askLocation = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { result -> if (result.values.any { it } && open != null) LocationService.start(this, driverId) }
+
+    /**
+     * During a shift the position goes out automatically (unless the driver turned it off in "Polohy vodičov").
+     * Without the permission yet, the driver is asked once per screen opening – with the reason first.
+     */
+    private fun shareDuringShift(shift: Shift?) {
+        if (shift == null || driver?.active == false) return LocationService.stop(this)
+        if (!LocationService.isEnabled(this)) return
+        if (Gps.hasPermission(this)) return LocationService.start(this, driverId)
+        if (askedForLocation || !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        askedForLocation = true
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Zdieľať polohu počas smeny?")
+            .setMessage(
+                "Počas smeny sa tvoja poloha každých 5 minút pošle ostatným vodičom a šéfovi. " +
+                    "Po ukončení smeny sa to vypne. Vypnúť sa to dá aj v Polohy vodičov."
+            )
+            .setPositiveButton("Povoliť") { _, _ ->
+                askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            }
+            .setNegativeButton("Nie") { _, _ -> LocationService.setEnabled(this, false) }
+            .show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         driverId = Session.driverId(this) ?: return Session.signOut(this)
@@ -73,6 +105,9 @@ class DriverActivity : AppCompatActivity() {
         status = findViewById(R.id.status)
         since = findViewById(R.id.since)
         button = findViewById(R.id.button)
+        deliveriesButton = findViewById(R.id.deliveries)
+        deliveriesButton.setOnClickListener { DeliveriesActivity.open(this, workDay()) }
+        findViewById<View>(R.id.locations).setOnClickListener { LocationsActivity.openForDriver(this) }
         vacationButton = findViewById(R.id.vacation)
         vacationButton.setOnClickListener { showVacationRequestDialog(this, driverId, vacationLeft()) }
         addShiftButton = findViewById(R.id.add_shift)
@@ -131,6 +166,7 @@ class DriverActivity : AppCompatActivity() {
     private fun startListening() {
         listeners += Repo.listenDriver(driverId) { d ->
             if (d == null) return@listenDriver unlinked()
+            if (driver == null) Repo.linkPhone(driverId) // lets this phone see the other drivers' locations
             driver = d
             title = d.name
             vacationListener["v"] = Repo.listenAbsencesAfter(driverId, Vacation.countedFrom(d, LocalDate.now().year)) {
@@ -147,9 +183,11 @@ class DriverActivity : AppCompatActivity() {
         listeners += Repo.listenOpenShift(driverId) { shift ->
             open = shift
             if (shift != null) ShiftReminder.schedule(this, shift.start) else ShiftReminder.cancel(this)
+            shareDuringShift(shift)
             render()
         }
         listeners += Repo.listenVehicles { vehicles = it }
+        listeners += Repo.listenUnfinishedDeliveries { unfinishedDeliveries = it; render() }
         listeners += Repo.listenShifts(driverId, YearMonth.now()) { shifts ->
             currentMonthShifts = shifts
             render()
@@ -185,6 +223,7 @@ class DriverActivity : AppCompatActivity() {
         val shift = open
         vacationButton.visibility = if (d.hasVacation && d.active) View.VISIBLE else View.GONE
         addShiftButton.visibility = if (d.active) View.VISIBLE else View.GONE
+        renderDeliveriesButton()
         supportActionBar?.subtitle = vacationLeft()?.let { left ->
             val waiting = Vacation.pending(vacationAbsences)
             "Dovolenka: zostáva ${Vacation.days(left)} d" + if (waiting > 0) " · čaká $waiting d" else ""
@@ -210,6 +249,22 @@ class DriverActivity : AppCompatActivity() {
                 button.isEnabled = true
             }
         }
+    }
+
+    /** Deliveries belong to the day of the running shift – a night shift goes on past midnight. */
+    private fun workDay(): LocalDate = open?.start?.toLocalDate() ?: LocalDate.now()
+
+    /** "Zásielky · vezieš 1 · voľné 3" */
+    private fun renderDeliveriesButton() {
+        val day = workDay()
+        val relevant = unfinishedDeliveries.filter { !it.date.isAfter(day) }
+        val mine = relevant.count { it.status == DeliveryStatus.IN_PROGRESS && it.driverId == driverId }
+        val free = relevant.count { it.status == DeliveryStatus.OPEN }
+        deliveriesButton.text = listOfNotNull(
+            "Zásielky",
+            if (mine > 0) "vezieš $mine" else null,
+            if (free > 0) "voľné $free" else null,
+        ).joinToString(" · ")
     }
 
     /** This year's vacation left after approved (also planned) vacations; null for workers without vacation. */

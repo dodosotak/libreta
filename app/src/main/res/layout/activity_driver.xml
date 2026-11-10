@@ -32,12 +32,32 @@
         app:cornerRadius="24dp" />
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/deliveries"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="-12dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="12dp"
+        android:text="Zásielky"
+        app:icon="@drawable/ic_package" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/locations"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:text="Polohy vodičov"
+        app:icon="@drawable/ic_location" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/vacation"
         style="?attr/materialButtonOutlinedStyle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="24dp"
-        android:layout_marginTop="-12dp"
         android:layout_marginEnd="24dp"
         android:text="Požiadať o dovolenku"
         android:visibility="gone"

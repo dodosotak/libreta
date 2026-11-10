@@ -63,6 +63,26 @@
       <p id="overdue" class="overdue" hidden>Smena beží už viac ako 12 hodín – nezabudol si ju ukončiť?</p>
     </section>
 
+    <section class="deliveries">
+      <div class="section-bar">
+        <h2>📦 Zásielky <span id="deliveries-day"></span></h2>
+        <span id="deliveries-counts" class="counts"></span>
+      </div>
+      <ul id="delivery-list" class="entries"></ul>
+      <p id="deliveries-empty" class="empty" hidden>Zatiaľ žiadne zásielky – majiteľ ich zadá pred smenou.</p>
+    </section>
+
+    <section class="locations">
+      <div class="section-bar">
+        <h2>📍 Polohy vodičov</h2>
+      </div>
+      <button id="send-location" class="vacation-button">📍  Poslať moju polohu</button>
+      <p id="own-location" class="since"></p>
+      <button id="delete-location" class="link-button" hidden>Zmazať moju polohu</button>
+      <ul id="location-list" class="entries"></ul>
+      <p id="locations-empty" class="empty" hidden></p>
+    </section>
+
     <section class="month">
       <div class="month-bar">
         <button id="prev" class="icon-button" aria-label="Predchádzajúci mesiac">‹</button>

@@ -173,3 +173,81 @@ object Fmt {
 
     fun month(month: YearMonth): String = month.format(DateTimeFormatter.ofPattern("LLLL yyyy", SK))
 }
+
+/** A name and number in the phone list for calling (no pay data); [OWNER] is the boss. */
+data class Contact(val id: String, val name: String, val phone: String) {
+    companion object {
+        const val OWNER = "owner"
+    }
+}
+
+/** A driver's last sent position; shown to the owner and the other drivers for [SHOWN_HOURS] hours. */
+data class DriverLocation(
+    val driverId: String,
+    val name: String,
+    val lat: Double,
+    val lng: Double,
+    /** Metres. */
+    val accuracy: Double,
+    /** Server time it was sent; null while it is still on its way (offline). */
+    val at: LocalDateTime?,
+) {
+    fun isFresh(now: LocalDateTime): Boolean = at == null || Duration.between(at, now).toHours() < SHOWN_HOURS
+
+    /** "pred 5 min (14:05) · ±20 m" */
+    fun ageText(now: LocalDateTime): String {
+        val sent = at ?: return "odosiela sa…"
+        val minutes = maxOf(0, Duration.between(sent, now).toMinutes())
+        val ago = when {
+            minutes < 1 -> "práve teraz"
+            minutes < 60 -> "pred $minutes min"
+            else -> "pred ${Fmt.hm(minutes)} h"
+        }
+        val time = if (sent.toLocalDate() == now.toLocalDate()) sent.format(Fmt.TIME) else "${sent.format(Fmt.DAY)} ${sent.format(Fmt.TIME)}"
+        return "$ago ($time) · ±${accuracy.toInt()} m"
+    }
+
+    companion object {
+        const val SHOWN_HOURS = 8L
+    }
+}
+
+enum class DeliveryStatus(val label: String) {
+    OPEN("voľná"),
+    IN_PROGRESS("vezie sa"),
+    DONE("doručená"),
+}
+
+/**
+ * A delivery (e.g. "Sinsay, Cropp, Town" to "OC Max Trnava") the owner enters for a day before the shift.
+ * All drivers see the day's list: one takes a free delivery, marks it delivered, and the others see it is done.
+ */
+data class Delivery(
+    val id: String = "",
+    val date: LocalDate,
+    /** What goes there – shops/orders, e.g. "Sinsay, Cropp, Town". */
+    val title: String,
+    /** Where – a place or address for the navigation, e.g. "OC Max Trnava". */
+    val place: String = "",
+    val note: String = "",
+    /** Order in the day's list (creation time in millis). */
+    val order: Long = 0,
+    val status: DeliveryStatus = DeliveryStatus.OPEN,
+    val driverId: String? = null,
+    val driverName: String? = null,
+    val takenAt: LocalDateTime? = null,
+    val doneAt: LocalDateTime? = null,
+) {
+    /** "vezie Jano od 14:05", "doručil Jano 14:40", "voľná". */
+    val statusText: String
+        get() = when (status) {
+            DeliveryStatus.OPEN -> "voľná"
+            DeliveryStatus.IN_PROGRESS -> "🚚 vezie ${driverName.orEmpty()}" + (takenAt?.let { " od ${it.format(Fmt.TIME)}" } ?: "")
+            DeliveryStatus.DONE -> "✅ doručil ${driverName.orEmpty()}" + (doneAt?.let { " ${it.format(Fmt.TIME)}" } ?: "")
+        }
+
+    companion object {
+        /** Free ones first, then those on the way, delivered last; otherwise in the owner's order. */
+        val BY_STATUS: Comparator<Delivery> = compareBy<Delivery> { it.status.ordinal }.thenBy { it.order }
+    }
+}

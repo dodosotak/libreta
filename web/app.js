@@ -7,6 +7,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, connectFirestoreEmulator,
   doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp,
+  runTransaction,
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -136,6 +137,20 @@ let vacationFrom = null;
 let unsubscribers = [];
 let monthUnsubscribers = [];
 let vacationUnsubscribe = null;
+/** The work day's deliveries (all drivers share them) and the ones not delivered yet of any day. */
+let dayDeliveries = [];
+let unfinishedDeliveries = [];
+let deliveriesDay = null;
+let deliveriesDayUnsubscribe = null;
+/** Drivers' last sent positions (locations/{driverId}); listened once this phone's link is recorded. */
+let locations = [];
+let locationsUnsubscribe = null;
+/** Phone list for calling (contacts/{driverId}, contacts/owner) – only names and numbers. */
+let contacts = [];
+let contactsUnsubscribe = null;
+let locating = false;
+/** Bumped by stopListening, so a link write still on its way doesn't start a listener for a stopped screen. */
+let locationsRun = 0;
 
 const shiftsRef = () => collection(db, "drivers", driverId, "shifts");
 
@@ -183,11 +198,19 @@ $("join-form").addEventListener("submit", async (event) => {
 // ---------- main screen ----------
 
 function stopListening() {
-  [...unsubscribers, ...monthUnsubscribers, vacationUnsubscribe].filter(Boolean).forEach((u) => u());
+  [...unsubscribers, ...monthUnsubscribers, vacationUnsubscribe, deliveriesDayUnsubscribe, locationsUnsubscribe, contactsUnsubscribe]
+    .filter(Boolean).forEach((u) => u());
+  locationsUnsubscribe = null;
+  contactsUnsubscribe = null;
+  locations = [];
+  contacts = [];
+  locationsRun++;
   unsubscribers = [];
   monthUnsubscribers = [];
   vacationUnsubscribe = null;
   vacationFrom = null;
+  deliveriesDayUnsubscribe = null;
+  deliveriesDay = null;
 }
 
 /** Absences after the date the vacation balance counts from; listens again when the owner changes that date. */
@@ -210,6 +233,7 @@ function showMain() {
     if (!snap.exists()) return unlinked();
     driver = snap.data();
     $("driver-name").textContent = driver.name || "Libreta";
+    listenLocations();
     listenVacation();
     render();
     if (!driver.phone && !sessionStorage.getItem("askedPhone")) {
@@ -226,6 +250,10 @@ function showMain() {
     todaysMinutes = snap.docs.map(shiftOf).filter((s) => s.end && dateKey(s.start) === dateKey(new Date()))
       .reduce((sum, s) => sum + s.worked, 0);
     render();
+  }));
+  unsubscribers.push(onSnapshot(query(collection(db, "deliveries"), where("status", "in", ["OPEN", "IN_PROGRESS"])), (snap) => {
+    unfinishedDeliveries = snap.docs.map(deliveryOf);
+    renderDeliveries();
   }));
   unsubscribers.push(onSnapshot(collection(db, "vehicles"), (snap) => {
     vehicles = snap.docs.map((d) => d.data()).filter((v) => v.active !== false).sort((a, b) => a.plate.localeCompare(b.plate));
@@ -260,6 +288,9 @@ function unlinked() {
 
 function render() {
   if (!driver) return;
+  listenDeliveries();
+  renderDeliveries();
+  renderLocations();
   const button = $("shift-button");
   const now = new Date();
   const left = vacationLeft(now.getFullYear());
@@ -409,6 +440,269 @@ async function addPastShift() {
   }).catch(() => showError(new Error("Smenu sa nepodarilo uložiť – mesiac je možno už uzavretý. Ozvi sa majiteľovi.")));
 }
 
+// ---------- deliveries ----------
+
+const deliveryOf = (snap) => ({ id: snap.id, ...snap.data() });
+
+/** Deliveries belong to the day of the running shift – a night shift goes on past midnight. */
+const workDay = () => dateKey(open ? open.start : new Date());
+
+/** Listens to the work day's list; again when the day changes (a shift started, midnight passed). */
+function listenDeliveries() {
+  const key = workDay();
+  if (key === deliveriesDay) return;
+  deliveriesDayUnsubscribe?.();
+  deliveriesDay = key;
+  dayDeliveries = [];
+  deliveriesDayUnsubscribe = onSnapshot(query(collection(db, "deliveries"), where("date", "==", key)), (snap) => {
+    dayDeliveries = snap.docs.map(deliveryOf);
+    renderDeliveries();
+  });
+}
+
+const tsTime = (ts) => (ts?.toDate ? hhmm(ts.toDate()) : "");
+
+function deliveryStatus(d) {
+  if (d.status === "IN_PROGRESS") return `🚚 vezie ${d.driverName || ""}${d.takenAt ? ` od ${tsTime(d.takenAt)}` : ""}`;
+  if (d.status === "DONE") return `✅ doručil ${d.driverName || ""} ${tsTime(d.doneAt)}`.trim();
+  return "voľná";
+}
+
+const RANK = { OPEN: 1, IN_PROGRESS: 2, DONE: 3 };
+
+/** The work day's list plus deliveries left over from earlier days; mine on the way first, delivered last. */
+function visibleDeliveries() {
+  const key = workDay();
+  const all = new Map(dayDeliveries.map((d) => [d.id, d]));
+  unfinishedDeliveries.filter((d) => d.date < key).forEach((d) => all.set(d.id, d));
+  const rank = (d) => (d.status === "IN_PROGRESS" && d.driverId === driverId ? 0 : RANK[d.status] || 1);
+  return [...all.values()].sort((a, b) => rank(a) - rank(b) || a.date.localeCompare(b.date) || (a.order || 0) - (b.order || 0));
+}
+
+function renderDeliveries() {
+  if (!driver) return;
+  const list = visibleDeliveries();
+  const key = workDay();
+  $("deliveries-day").textContent = key === dateKey(new Date()) ? "" : `· ${day(parseDate(key))}`;
+  const n = (s) => list.filter((d) => d.status === s).length;
+  $("deliveries-counts").textContent = [
+    n("OPEN") && `voľné ${n("OPEN")}`, n("IN_PROGRESS") && `vezú sa ${n("IN_PROGRESS")}`, n("DONE") && `doručené ${n("DONE")}`,
+  ].filter(Boolean).join(" · ");
+  const active = driver.active !== false;
+  $("delivery-list").innerHTML = list.map((d) => {
+    const mine = d.driverId === driverId && d.status === "IN_PROGRESS";
+    const sub = [d.date !== key ? `z ${day(parseDate(d.date))}` : null, d.place, d.note, deliveryStatus(d)].filter(Boolean).join(" · ");
+    const button = d.status === "OPEN" && active ? `<button class="small-button" data-take="${escape(d.id)}">Beriem</button>`
+      : mine ? `<button class="small-button done-button" data-done="${escape(d.id)}">Doručené</button>` : "";
+    const cls = ["delivery", d.status === "DONE" ? "done" : "", mine ? "mine" : ""].filter(Boolean).join(" ");
+    return `<li class="${cls}" data-delivery="${escape(d.id)}"><div class="text-col"><div class="title">${escape(d.title || "")}</div>`
+      + `<div class="sub">${escape(sub)}</div></div>${button}</li>`;
+  }).join("");
+  $("delivery-list").hidden = !list.length;
+  $("deliveries-empty").hidden = list.length > 0;
+}
+
+$("delivery-list").addEventListener("click", (e) => {
+  const find = (id) => visibleDeliveries().find((d) => d.id === id);
+  const take = e.target.closest("[data-take]");
+  const done = e.target.closest("[data-done]");
+  const row = e.target.closest("[data-delivery]");
+  if (take) takeDelivery(find(take.dataset.take));
+  else if (done) finishDelivery(find(done.dataset.done));
+  else if (row) deliveryDetail(find(row.dataset.delivery));
+});
+
+/** A transaction, so two drivers tapping at once can't both get it. */
+async function takeDelivery(d) {
+  if (!d || !driver) return;
+  const ref = doc(db, "deliveries", d.id);
+  try {
+    const problem = await runTransaction(db, async (t) => {
+      const snap = await t.get(ref);
+      if (!snap.exists()) return "Zásielku medzitým majiteľ odstránil.";
+      const current = snap.data();
+      if (current.status !== "OPEN") return current.driverId === driverId ? null : `Túto zásielku už vzal ${current.driverName || "iný vodič"}.`;
+      t.update(ref, { status: "IN_PROGRESS", driverId, driverName: driver.name, takenAt: serverTimestamp() });
+      return null;
+    });
+    if (problem) dialog({ title: "Zásielka je obsadená", message: problem });
+  } catch (e) {
+    console.warn(e);
+    // Another driver got it a moment earlier: the server refuses the write (no retry) – say who has it.
+    const current = await getDocFromServer(ref).then((s) => s.data()).catch(() => null);
+    if (current && current.status !== "OPEN" && current.driverId !== driverId) {
+      dialog({ title: "Zásielka je obsadená", message: `Túto zásielku už vzal ${current.driverName || "iný vodič"}.` });
+    } else {
+      dialog({ title: "Nepodarilo sa", message: "Zásielku sa nepodarilo vziať. Si pripojený na internet?" });
+    }
+  }
+}
+
+async function finishDelivery(d) {
+  if (!d) return;
+  const ok = await dialog({ title: "Doručené?", message: [d.title, d.place].filter(Boolean).join("\n"), ok: "Áno, doručené" });
+  if (ok) updateDoc(doc(db, "deliveries", d.id), { status: "DONE", doneAt: serverTimestamp() }).catch(showError);
+}
+
+/** Opens the place in Apple Maps on an iPhone, Google Maps elsewhere. */
+function navigate(place) {
+  const q = encodeURIComponent(place);
+  const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  window.open(iOS ? `https://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
+}
+
+async function deliveryDetail(d) {
+  if (!d) return;
+  const mine = d.driverId === driverId && d.status === "IN_PROGRESS";
+  const canTake = d.status === "OPEN" && driver?.active !== false;
+  const choices = [
+    d.place ? ["navigate", `📍 Navigovať – ${d.place}`] : null,
+    canTake ? ["take", "Beriem"] : null,
+    mine ? ["done", "Doručené"] : null,
+    mine ? ["release", "Vrátiť – neveziem"] : null,
+  ].filter(Boolean);
+  const result = await dialog({
+    title: d.title || "Zásielka",
+    message: [d.note, d.date !== workDay() ? `Zásielka z ${day(parseDate(d.date))}` : null, deliveryStatus(d)].filter(Boolean).join("\n"),
+    body: choices.length ? `<div class="choices">${choices.map(([v, label], i) => `<label class="choice"><input type="radio" name="action" value="${v}" ${i === 0 ? "checked" : ""}>${escape(label)}</label>`).join("")}</div>` : "",
+    ok: choices.length ? "Potvrdiť" : "Zavrieť",
+  });
+  const action = result?.get("action");
+  if (action === "navigate") navigate(d.place);
+  else if (action === "take") takeDelivery(d);
+  else if (action === "done") finishDelivery(d);
+  else if (action === "release") {
+    updateDoc(doc(db, "deliveries", d.id), { status: "OPEN", driverId: null, driverName: null, takenAt: null }).catch(showError);
+  }
+}
+
+// ---------- drivers' locations ----------
+
+const SHOWN_HOURS = 8;
+
+/** Records which driver this phone is (links/{uid}) – the rules show the locations only then – and listens to them. */
+async function listenLocations() {
+  const uid = auth.currentUser?.uid;
+  if (!uid || locationsUnsubscribe) return;
+  locationsUnsubscribe = () => {}; // claimed, so a second call doesn't start another listener
+  const run = locationsRun;
+  try {
+    await setDoc(doc(db, "links", uid), { driverId });
+  } catch (e) {
+    console.warn(e);
+    if (run !== locationsRun) return;
+    locationsUnsubscribe = null;
+    $("locations-empty").textContent = "Polohy sa nepodarilo načítať. Si pripojený na internet?";
+    $("locations-empty").hidden = false;
+    return;
+  }
+  if (run !== locationsRun || !driverId) return;
+  locationsUnsubscribe = onSnapshot(collection(db, "locations"), (snap) => {
+    locations = snap.docs.map((d) => {
+      const at = d.data({ serverTimestamps: "estimate" }).at;
+      return { id: d.id, ...d.data(), at: at?.toDate ? at.toDate() : null };
+    });
+    renderLocations();
+  }, (e) => console.warn("locations", e));
+  contactsUnsubscribe = onSnapshot(collection(db, "contacts"), (snap) => {
+    contacts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Fills in the own number for drivers who saved it before the phone list existed.
+    const phone = (driver?.phone || "").trim();
+    if (driver && driver.active !== false && phone && !contacts.some((c) => c.id === driverId && c.phone === phone && c.name === driver.name)) {
+      setDoc(doc(db, "contacts", driverId), { name: driver.name, phone }).catch((e) => console.warn("contact", e));
+    }
+    renderLocations();
+  }, (e) => console.warn("contacts", e));
+}
+
+/** "pred 5 min (14:05) · ±20 m" */
+function locationAge(l, now = new Date()) {
+  if (!l.at) return "odosiela sa…";
+  const minutes = minutesBetween(l.at, now);
+  const ago = minutes < 1 ? "práve teraz" : minutes < 60 ? `pred ${minutes} min` : `pred ${hm(minutes)} h`;
+  const time = dateKey(l.at) === dateKey(now) ? hhmm(l.at) : `${day(l.at)} ${hhmm(l.at)}`;
+  return `${ago} (${time}) · ±${Math.round(l.accuracy || 0)} m`;
+}
+
+function renderLocations() {
+  if (!driver) return;
+  const now = new Date();
+  const fresh = locations.filter((l) => !l.at || now - l.at < SHOWN_HOURS * 3600000);
+  const mine = fresh.find((l) => l.id === driverId);
+  // The boss first, then who sent a position (newest first), then the rest by name.
+  const ids = new Set([...fresh.map((l) => l.id), ...contacts.map((c) => c.id)]);
+  ids.delete(driverId);
+  const others = [...ids].map((id) => {
+    const l = fresh.find((x) => x.id === id) || null;
+    const c = contacts.find((x) => x.id === id);
+    return { id, name: c?.name || l?.name || "", phone: (c?.phone || "").trim(), location: l, owner: id === "owner" };
+  }).sort((a, b) => (b.owner - a.owner) || (!a.location - !b.location)
+    || ((b.location?.at || now) - (a.location?.at || now)) || a.name.localeCompare(b.name, "sk"));
+  $("location-list").innerHTML = others.map((p) => {
+    const sub = [p.location ? locationAge(p.location, now) : p.owner ? null : "poloha neposlaná", p.phone || null].filter(Boolean);
+    return `<li class="location" data-location="${escape(p.id)}"><div class="text-col">`
+      + `<div class="title">${p.owner ? "👔 " : ""}${escape(p.name || (p.owner ? "Šéf" : ""))}</div>`
+      + `<div class="sub">${sub.map(escape).join("<br>")}</div></div>`
+      + (p.location ? `<button class="small-button" data-map="${escape(p.id)}">Mapa</button>` : "")
+      + (p.phone ? `<a class="small-button call-button" href="tel:${escape(p.phone.replace(/[^0-9+]/g, ""))}">Zavolať</a>` : "")
+      + `</li>`;
+  }).join("");
+  $("location-list").hidden = !others.length;
+  $("locations-empty").textContent = `Ostatní vodiči za posledných ${SHOWN_HOURS} hodín neposlali polohu ani nemajú zadané číslo.`;
+  $("locations-empty").hidden = others.length > 0;
+  $("own-location").textContent = locating ? "Zisťujem polohu… (vonku to ide rýchlejšie)"
+    : mine ? `Tvoja poloha: ${locationAge(mine, now)} – vidia ju ostatní vodiči a šéf.`
+      : `Polohu pošleš len keď ťukneš – appka ťa nesleduje. Vidia ju ostatní vodiči a šéf ${SHOWN_HOURS} hodín.`;
+  const button = $("send-location");
+  button.textContent = locating ? "Zisťujem polohu…" : mine ? "📍  Poslať polohu znova" : "📍  Poslať moju polohu";
+  button.disabled = locating || driver.active === false;
+  $("delete-location").hidden = !mine || locating;
+}
+
+/** Opens the position in Apple Maps on an iPhone, Google Maps elsewhere. */
+function showOnMap(l) {
+  const point = `${l.lat},${l.lng}`;
+  const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  window.open(iOS ? `https://maps.apple.com/?ll=${point}&q=${encodeURIComponent(l.name || "Vodič")}`
+    : `https://www.google.com/maps/search/?api=1&query=${point}`, "_blank");
+}
+
+$("location-list").addEventListener("click", (e) => {
+  if (e.target.closest("a[href^='tel:']")) return; // the link dials on its own
+  const row = e.target.closest("[data-location]");
+  const l = row && locations.find((x) => x.id === row.dataset.location);
+  if (l) return showOnMap(l);
+  const phone = row && contacts.find((x) => x.id === row.dataset.location)?.phone;
+  if (phone) location.href = `tel:${phone.replace(/[^0-9+]/g, "")}`;
+});
+
+$("send-location").addEventListener("click", () => {
+  if (!driver || locating) return;
+  if (!navigator.geolocation) return dialog({ title: "Poloha", message: "Tento prehliadač nevie zistiť polohu." });
+  locating = true;
+  renderLocations();
+  navigator.geolocation.getCurrentPosition((pos) => {
+    locating = false;
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    setDoc(doc(db, "locations", driverId), { name: driver.name, lat, lng, accuracy: accuracy ?? 0, at: serverTimestamp() })
+      .catch(showError);
+    renderLocations();
+  }, (error) => {
+    locating = false;
+    renderLocations();
+    dialog({
+      title: "Polohu sa nepodarilo zistiť",
+      message: error.code === error.PERMISSION_DENIED
+        ? "Povoľ polohu: Nastavenia → Súkromie a bezpečnosť → Polohové služby → Safari (alebo Libreta) → Pri používaní aplikácie."
+        : "Skús to znova, najlepšie vonku.",
+    });
+  }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 60000 });
+});
+
+$("delete-location").addEventListener("click", () => {
+  deleteDoc(doc(db, "locations", driverId)).catch(showError);
+});
+
 // ---------- month overview ----------
 
 function showMonth(month) {
@@ -554,7 +848,13 @@ async function showProfile() {
     ok: "Uložiť",
   });
   if (!result) return;
-  updateDoc(doc(db, "drivers", driverId), { phone: String(result.get("phone")).trim().slice(0, 30) }).catch(showError);
+  const phone = String(result.get("phone")).trim().slice(0, 30);
+  updateDoc(doc(db, "drivers", driverId), { phone }).catch(showError);
+  // The phone list the other drivers call from (a blank number takes the driver out of it).
+  if (driver.active !== false) {
+    (phone ? setDoc(doc(db, "contacts", driverId), { name: driver.name, phone }) : deleteDoc(doc(db, "contacts", driverId)))
+      .catch((e) => console.warn("contact", e));
+  }
 }
 
 $("logout-button").addEventListener("click", async () => {

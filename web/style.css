@@ -165,6 +165,33 @@ button {
 }
 .vacation-button + .vacation-button { margin-top: 8px; }
 
+.deliveries { padding: 8px 16px 8px; }
+.section-bar { display: flex; align-items: baseline; gap: 8px; margin: 8px 4px; }
+.section-bar h2 { flex: 1; font-size: 19px; margin: 0; }
+.section-bar h2 span { color: var(--muted); font-weight: 400; font-size: 15px; }
+.counts { color: var(--muted); font-size: 14px; }
+.entries li.delivery { cursor: pointer; }
+.entries li.done { opacity: .55; }
+.entries li.mine .title { color: var(--green); }
+.small-button {
+  padding: 10px 14px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.small-button.done-button { background: var(--green); }
+@media (prefers-color-scheme: dark) {
+  .small-button { color: #0b1a2e; }
+  .entries li.mine .title { color: #81c784; }
+}
+
+.locations { padding: 8px 16px 8px; }
+.link-button { display: block; margin: 0 auto 8px; background: none; color: var(--blue); padding: 8px; }
+.entries li.location { cursor: pointer; }
+.entries li.location .small-button + .small-button { margin-left: 6px; }
+a.call-button { display: inline-block; text-decoration: none; border-radius: 12px; background: var(--green); }
+
 .month { padding: 8px 16px calc(env(safe-area-inset-bottom) + 24px); }
 .month-bar { display: flex; align-items: center; }
 .month-bar h2 { flex: 1; text-align: center; font-size: 19px; margin: 0; }

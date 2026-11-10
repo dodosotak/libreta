@@ -145,7 +145,7 @@ fun showProfileDialog(context: Context, driver: Driver) {
         .setIcon(R.drawable.ic_people)
         .setMessage("${driver.name} · ${driver.type.label}\n\nTvoje telefónne číslo uvidí majiteľ.")
         .setView(dialogForm(context, phone))
-        .setPositiveButton("Uložiť") { _, _ -> Repo.savePhone(driver.id, phone.value.trim().take(30)) }
+        .setPositiveButton("Uložiť") { _, _ -> Repo.savePhone(driver, phone.value.trim().take(30)) }
         .setNegativeButton("Zrušiť", null)
         .show()
 }

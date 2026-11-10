@@ -15,6 +15,7 @@ class RowHolder(view: View) : RecyclerView.ViewHolder(view) {
     val subtitle: TextView = view.findViewById(R.id.subtitle)
     val value: TextView = view.findViewById(R.id.value)
     val action: MaterialButton = view.findViewById(R.id.action)
+    val action2: MaterialButton = view.findViewById(R.id.action2)
 }
 
 /** One adapter for every list in the app: each screen only says how to fill a row. */
@@ -35,6 +36,8 @@ class RowAdapter<T>(private val bind: (RowHolder, T) -> Unit) : RecyclerView.Ada
     override fun onBindViewHolder(holder: RowHolder, position: Int) {
         holder.action.visibility = View.GONE
         holder.action.setOnClickListener(null)
+        holder.action2.visibility = View.GONE
+        holder.action2.setOnClickListener(null)
         holder.itemView.setOnClickListener(null)
         holder.itemView.alpha = 1f
         bind(holder, items[position])

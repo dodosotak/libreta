@@ -4,6 +4,12 @@
 
     <!-- Reminder for a shift that wasn't ended. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The driver sends the current position with a tap (no background tracking). -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Automatic sending during a shift: a location service with a notification, started while the app is open. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:allowBackup="true"
@@ -30,12 +36,25 @@
         <activity android:name=".DriverActivity" />
 
         <activity
+            android:name=".DeliveriesActivity"
+            android:parentActivityName=".DriverActivity" />
+
+        <activity
+            android:name=".LocationsActivity"
+            android:label="Polohy vodičov" />
+
+        <activity
             android:name=".VehiclesActivity"
             android:parentActivityName=".MainActivity" />
 
         <activity
             android:name=".AccountantsActivity"
             android:parentActivityName=".MainActivity" />
+
+        <service
+            android:name=".LocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <receiver
             android:name=".ShiftReminder"
