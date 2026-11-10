@@ -1,6 +1,6 @@
 // Keeps the app shell available offline; Firestore keeps the data offline on its own.
 // Bump VERSION with every deploy that changes these files.
-const VERSION = "libreta-web-9";
+const VERSION = "libreta-web-10";
 const SHELL = [
   "./", "index.html", "app.js", "style.css", "manifest.webmanifest",
   "icons/icon-192.png", "icons/apple-touch-icon.png", "icons/logo-white.png",

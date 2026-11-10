@@ -47,7 +47,14 @@ const MONTHS = ["január", "február", "marec", "apríl", "máj", "jún", "júl"
 const day = (d) => `${DAYS[d.getDay()]} ${d.getDate()}.${d.getMonth() + 1}.`;
 const count = (n, one, few, many) => `${n} ${n === 1 ? one : n >= 2 && n <= 4 ? few : many}`;
 
-const ABSENCES = { VACATION: "Dovolenka", SICK: "PN", CARE: "OČR", COMP_OFF: "Náhradné voľno", UNPAID: "Neplatené voľno" };
+const ABSENCES = {
+  VACATION: "Dovolenka", SICK: "PN", CARE: "OČR", COMP_OFF: "Náhradné voľno", UNPAID: "Neplatené voľno",
+  DOCTOR: "Lekár", DOCTOR_FAMILY: "Lekár – sprevádzanie",
+};
+/** Doctor's visits: may be a few hours of one day; 7 days a year each (as Doctor in Models.kt). */
+const BY_HOURS = new Set(["DOCTOR", "DOCTOR_FAMILY"]);
+const DOCTOR_DAYS = 7;
+const LONGER_VACATION = 25;
 const STATUSES = { PENDING: "čaká na schválenie", REJECTED: "zamietnutá" };
 // Absences entered by the owner have no status – they count like approved ones.
 const approved = (a) => (a.status || "APPROVED") === "APPROVED";
@@ -99,11 +106,46 @@ function vacationLeft(year) {
   const first = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
   const used = vacationAbsences.filter((a) => a.type === "VACATION" && approved(a))
     .reduce((sum, a) => sum + workingDaysBetween(a, first, new Date(year, 11, 31)), 0);
-  return base + (driver.vacationPerYear ?? 20) * (year - start.getFullYear()) - used;
+  let added = 0;
+  for (let y = start.getFullYear() + 1; y <= year; y++) added += vacationEntitlement(y);
+  return base + added - used;
 }
+
+/** 25 days from the year the employee turns 33 or when caring for a child, otherwise the base (as Driver.vacationEntitlement). */
+function vacationEntitlement(year) {
+  const base = driver?.vacationPerYear ?? 20;
+  const longer = driver?.caresForChild || (driver?.birthYear != null && year - driver.birthYear >= 33);
+  return longer ? Math.max(base, LONGER_VACATION) : base;
+}
+
+/** Minutes of the contract's working day (úväzok / 5). */
+const dailyMinutes = () => Math.round((driver?.weeklyHours ?? 40) * 60 / 5);
+
+/** Minutes away: the hours of a doctor's visit, otherwise working days × the contract's day (from–to as Date). */
+function absenceMinutes(a, first, last) {
+  if (a.hours != null) return parseDate(a.from) >= first && parseDate(a.from) <= last ? Math.round(a.hours * 60) : 0;
+  return workingDaysBetween(a, first, last) * dailyMinutes();
+}
+
+/** Doctor's minutes left this year for [type] (approved visits only). */
+function doctorLeft(type, year, except = null) {
+  const used = vacationAbsences.filter((a) => a.type === type && approved(a) && a.id !== except)
+    .reduce((sum, a) => sum + absenceMinutes(a, new Date(year, 0, 1), new Date(year, 11, 31)), 0);
+  return DOCTOR_DAYS * dailyMinutes() - used;
+}
+
+/** 630 -> "10,5" */
+const hoursText = (minutes) => decimal(minutes / 60);
 
 function vacationStart(year) {
   return driver?.vacationAsOf ? parseDate(driver.vacationAsOf) : new Date(year - 1, 11, 31);
+}
+
+/** Absences ending after this day are needed: the vacation balance and this year's doctor's visits. */
+function absencesFrom(year) {
+  const start = vacationStart(year);
+  const yearStart = new Date(year - 1, 11, 31);
+  return start < yearStart ? start : yearStart;
 }
 
 /** 4.5 -> "4,5" */
@@ -215,7 +257,7 @@ function stopListening() {
 
 /** Absences after the date the vacation balance counts from; listens again when the owner changes that date. */
 function listenVacation() {
-  const from = dateKey(vacationStart(new Date().getFullYear()));
+  const from = dateKey(absencesFrom(new Date().getFullYear()));
   if (from === vacationFrom) return;
   vacationUnsubscribe?.();
   vacationFrom = from;
@@ -294,10 +336,12 @@ function render() {
   const button = $("shift-button");
   const now = new Date();
   const left = vacationLeft(now.getFullYear());
-  const waiting = vacationAbsences.filter((a) => a.status === "PENDING").reduce((sum, a) => sum + workingDays(parseDate(a.from), parseDate(a.to)), 0);
+  const waiting = vacationAbsences.filter((a) => a.status === "PENDING" && a.type === "VACATION").reduce((sum, a) => sum + workingDays(parseDate(a.from), parseDate(a.to)), 0);
   $("vacation-button").hidden = left == null || driver.active === false;
   $("add-shift-button").hidden = driver.active === false;
-  $("vacation-left").textContent = left == null ? "" : `Dovolenka: zostáva ${decimal(left)} d${waiting ? ` · čaká ${waiting} d` : ""}`;
+  $("vacation-left").textContent = left == null ? ""
+    : `Dovolenka: zostáva ${decimal(left)} d${waiting ? ` · čaká ${waiting} d` : ""}`
+      + ` · lekár ${hoursText(doctorLeft("DOCTOR", now.getFullYear()))} h`;
   $("overdue").hidden = !(open && minutesBetween(open.start, now) >= OVERDUE_MINUTES);
   if (open) {
     $("status").textContent = `Na smene ${hm(minutesBetween(open.start, now))} h`;
@@ -735,12 +779,19 @@ function renderMonth() {
   const days = new Set(finished.map((s) => dateKey(s.start))).size;
   const km = finished.reduce((sum, s) => sum + (s.kmStart != null && s.kmEnd != null && s.kmEnd >= s.kmStart ? s.kmEnd - s.kmStart : 0), 0);
   const absenceDays = {};
-  for (const a of monthAbsences.filter(approved)) absenceDays[a.type] = (absenceDays[a.type] || 0) + workingDaysIn(a, y, m);
+  const absenceHours = {};
+  for (const a of monthAbsences.filter(approved)) {
+    if (BY_HOURS.has(a.type)) absenceHours[a.type] = (absenceHours[a.type] || 0) + absenceMinutes(a, new Date(y, m, 1), new Date(y, m + 1, 0));
+    else absenceDays[a.type] = (absenceDays[a.type] || 0) + workingDaysIn(a, y, m);
+  }
 
   $("total-hours").textContent = `${hm(minutes)} h`;
   $("totals").textContent = [
     `${count(days, "deň", "dni", "dní")} · ${count(finished.length, "smena", "smeny", "smien")}${days ? ` · priemer ${hm(Math.round(minutes / days))} h/deň` : ""}`,
-    Object.entries(absenceDays).filter(([, n]) => n > 0).map(([t, n]) => `${ABSENCES[t] || t} ${count(n, "deň", "dni", "dní")}`).join(" · "),
+    [
+      ...Object.entries(absenceDays).filter(([, n]) => n > 0).map(([t, n]) => `${ABSENCES[t] || t} ${count(n, "deň", "dni", "dní")}`),
+      ...Object.entries(absenceHours).filter(([, n]) => n > 0).map(([t, n]) => `${ABSENCES[t] || t} ${hoursText(n)} h`),
+    ].join(" · "),
     km ? `Najazdené: ${km} km` : "",
   ].filter(Boolean).join("\n");
   const unfinished = monthShifts.length - finished.length;
@@ -774,43 +825,90 @@ function absenceRow(a, y, m) {
   const from = parseDate(a.from);
   const to = parseDate(a.to);
   const range = a.from === a.to ? day(from) : `${day(from)} – ${day(to)}`;
-  const title = (ABSENCES[a.type] || a.type) + (approved(a) ? "" : ` · ${STATUSES[a.status] || a.status}`);
+  const title = (BY_HOURS.has(a.type) ? "🩺 " : "") + (ABSENCES[a.type] || a.type) + (approved(a) ? "" : ` · ${STATUSES[a.status] || a.status}`);
   return `<li${approved(a) ? "" : ` class="request" data-request="${escape(a.id)}"`}><div class="text-col"><div class="title">${escape(title)}</div>`
     + `<div class="sub">${escape([range, a.note].filter(Boolean).join(" · "))}</div></div>`
-    + `<div class="value">${count(workingDaysIn(a, y, m), "deň", "dni", "dní")}</div></li>`;
+    + `<div class="value">${a.hours != null ? `${decimal(a.hours)} h` : count(workingDaysIn(a, y, m), "deň", "dni", "dní")}</div></li>`;
 }
 
 // ---------- vacation requests ----------
 
 $("vacation-button").addEventListener("click", requestVacation);
 
+/** "2,5" -> 2.5; a part of one day (more than 0, at most 24 h), otherwise null. */
+function parseHours(text) {
+  const h = parseFloat(String(text || "").trim().replace(",", "."));
+  return h > 0 && h <= 24 ? h : null;
+}
+
+/** A vacation or a doctor's visit (own / accompanying a family member, whole days or hours of one day) for the owner to approve. */
 async function requestVacation() {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const left = vacationLeft(new Date().getFullYear());
+  const year = new Date().getFullYear();
+  const left = vacationLeft(year);
   const days = (data) => {
     const from = String(data.get("from") || ""), to = String(data.get("to") || "");
     return from && to && from <= to ? workingDays(parseDate(from), parseDate(to)) : null;
   };
-  const result = await dialog({
-    title: "Žiadosť o dovolenku",
-    message: "Žiadosť pošleš majiteľovi na schválenie." + (left != null ? `\nZostatok dovolenky: ${decimal(left)} d` : ""),
-    body: `<label class="field"><span>Od</span><input name="from" type="date" required value="${dateKey(tomorrow)}"></label>
-      <label class="field"><span>Do</span><input name="to" type="date" required value="${dateKey(tomorrow)}"></label>
-      <label class="field"><span>Poznámka (nepovinné)</span><input name="note" maxlength="200"></label>`,
+  const pending = dialog({
+    title: "Žiadosť o voľno",
+    message: "Dovolenku alebo lekára pošleš majiteľovi na schválenie.",
+    body: `<label class="field"><span>O čo žiadaš</span><select name="type">
+        <option value="VACATION">Dovolenka</option><option value="DOCTOR">Lekár</option>
+        <option value="DOCTOR_FAMILY">Lekár – sprevádzanie rodinného príslušníka</option></select></label>
+      <label class="field"><span id="from-label">Od</span><input name="from" type="date" required value="${dateKey(tomorrow)}"></label>
+      <label class="field" id="to-field"><span>Do</span><input name="to" type="date" required value="${dateKey(tomorrow)}"></label>
+      <label class="field" id="hours-field" hidden><span>Hodiny (napr. 2,5) – prázdne = celý deň</span><input name="hours" inputmode="decimal"></label>
+      <label class="field"><span>Poznámka (nepovinné)</span><input name="note" maxlength="200"></label>
+      <p id="request-info" class="since"></p>`,
     ok: "Poslať žiadosť",
     validate: (data) => {
+      const doctor = BY_HOURS.has(String(data.get("type")));
+      const text = String(data.get("hours") || "").trim();
+      if (doctor && text && parseHours(text) == null) return "Zadaj hodiny, napr. 2,5.";
+      if (doctor && parseHours(text) != null) return null;
       const n = days(data);
       if (n == null) return "Koniec je pred začiatkom.";
       if (n === 0) return "V zvolenom období nie je žiadny pracovný deň.";
       return null;
     },
   });
+  // Shows the hours for a doctor's visit and what the request leaves of the yearly allowance.
+  const form = $("dialog-form");
+  const update = () => {
+    const data = new FormData(form);
+    const type = String(data.get("type"));
+    const doctor = BY_HOURS.has(type);
+    const hours = doctor ? parseHours(data.get("hours")) : null;
+    $("hours-field").hidden = !doctor;
+    $("to-field").hidden = hours != null;
+    $("from-label").textContent = hours != null ? "Dňa" : "Od";
+    const n = days(data) ?? 0;
+    if (doctor) {
+      const minutes = hours != null ? Math.round(hours * 60) : n * dailyMinutes();
+      const rest = doctorLeft(type, year);
+      $("request-info").textContent = `Zostáva ${hoursText(rest)} h z ${hoursText(DOCTOR_DAYS * dailyMinutes())} h`
+        + (minutes ? ` → po schválení ${hoursText(rest - minutes)} h` : "")
+        + (rest - minutes < 0 ? " · ⚠ nad ročný nárok" : "");
+    } else {
+      $("request-info").textContent = left != null ? `Zostatok dovolenky: ${decimal(left)} d → po schválení ${decimal(left - n)} d` : "";
+    }
+  };
+  form.addEventListener("input", update);
+  update();
+  const result = await pending;
+  form.removeEventListener("input", update);
   if (!result) return;
-  addDoc(collection(db, "drivers", driverId, "absences"), {
-    type: "VACATION", from: String(result.get("from")), to: String(result.get("to")),
+  const type = String(result.get("type"));
+  const hours = BY_HOURS.has(type) ? parseHours(result.get("hours")) : null;
+  const from = String(result.get("from"));
+  const data = {
+    type, from, to: hours != null ? from : String(result.get("to")),
     note: String(result.get("note") || "").trim().slice(0, 200), status: "PENDING", requestedAt: serverTimestamp(),
-  }).catch(showError);
+  };
+  if (hours != null) data.hours = hours;
+  addDoc(collection(db, "drivers", driverId, "absences"), data).catch(showError);
 }
 
 /** A waiting request can be withdrawn, a rejected one cleared away. */
@@ -818,9 +916,11 @@ async function ownRequest(a) {
   if (!a) return;
   const waiting = a.status === "PENDING";
   const n = workingDays(parseDate(a.from), parseDate(a.to));
+  const amount = a.hours != null ? `${decimal(a.hours)} h` : count(n, "pracovný deň", "pracovné dni", "pracovných dní");
+  const range = a.from === a.to ? day(parseDate(a.from)) : `${day(parseDate(a.from))} – ${day(parseDate(a.to))}`;
   const ok = await dialog({
     title: waiting ? "Zrušiť žiadosť?" : "Žiadosť bola zamietnutá",
-    message: `${ABSENCES[a.type] || a.type} ${day(parseDate(a.from))} – ${day(parseDate(a.to))} · ${count(n, "pracovný deň", "pracovné dni", "pracovných dní")}`,
+    message: `${ABSENCES[a.type] || a.type} ${range} · ${amount}`,
     ok: waiting ? "Zrušiť žiadosť" : "Odstrániť zo zoznamu",
   });
   if (ok) deleteDoc(doc(db, "drivers", driverId, "absences", a.id)).catch(showError);

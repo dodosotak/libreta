@@ -50,7 +50,7 @@ class ShiftsActivity : AppCompatActivity() {
                     if (!checkEditable()) return@setOnClickListener
                     val d = driver
                     if (entry.status == AbsenceStatus.PENDING && d != null) {
-                        showRequestDecisionDialog(this, entry, d.name, vacationLeft())
+                        showRequestDecisionDialog(this, entry, d, vacationLeft(), vacationAbsences)
                     } else {
                         showAbsenceDialog(this, driverId, entry, entry.from)
                     }
@@ -92,7 +92,7 @@ class ShiftsActivity : AppCompatActivity() {
         listeners += Repo.listenDriver(driverId) { d ->
             driver = d ?: return@listenDriver finish()
             title = d.name
-            vacationListener["v"] = Repo.listenAbsencesAfter(driverId, Vacation.countedFrom(d, LocalDate.now().year)) {
+            vacationListener["v"] = Repo.listenAbsencesAfter(driverId, Vacation.listenFrom(d, LocalDate.now().year)) {
                 vacationAbsences = it
                 render()
             }

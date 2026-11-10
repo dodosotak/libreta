@@ -72,9 +72,12 @@ fun bindMonthSummary(
             if (s.days > 0) append(" · priemer ${Fmt.hm(s.minutes / s.days)} h/deň")
         },
         surchargeLine(s.surcharges),
-        s.absenceDays.filterValues { it > 0 }.entries.joinToString(" · ") { (type, days) ->
-            "${type.label} ${Fmt.count(days, "deň", "dni", "dní")}"
-        }.ifEmpty { null },
+        AbsenceType.entries.mapNotNull { type ->
+            when {
+                type.byHours -> s.absenceMinutes(type).takeIf { it > 0 }?.let { "${type.label} ${Fmt.hoursShort(it)} h" }
+                else -> s.absenceDays[type]?.takeIf { it > 0 }?.let { "${type.label} ${Fmt.count(it, "deň", "dni", "dní")}" }
+            }
+        }.joinToString(" · ").ifEmpty { null },
         if (s.km > 0) "Najazdené: ${s.km} km" else null,
         if (driver?.type == WorkerType.EMPLOYEE) "Denné smeny: ${Fmt.count(s.dayShifts, "deň", "dni", "dní")} · nočné: ${Fmt.hm(s.nightShiftMinutes)} h" else null,
         if (showPay && driver != null) "Suma: ${Fmt.money(s.amount)} € (${driver.rateText})" else null,
@@ -114,11 +117,12 @@ fun bindShiftRow(row: RowHolder, shift: Shift, office: Boolean) {
 
 /** A vacation request that waits or was rejected says so and is greyed out – it doesn't count in the totals. */
 fun bindAbsenceRow(row: RowHolder, absence: Absence, month: YearMonth) {
-    row.title.text = "🏖 ${absence.type.label}" + if (absence.approved) "" else " · ${absence.status.label}"
+    val icon = if (absence.type.byHours) "🩺" else "🏖"
+    row.title.text = "$icon ${absence.type.label}" + if (absence.approved) "" else " · ${absence.status.label}"
     val range = if (absence.from == absence.to) absence.from.format(Fmt.DAY)
     else "${absence.from.format(Fmt.DAY)} – ${absence.to.format(Fmt.DAY)}"
     row.subtitle.text = listOfNotNull(range, absence.note.ifBlank { null }).joinToString(" · ")
-    row.value.text = Fmt.count(absence.workingDaysIn(month), "deň", "dni", "dní")
+    row.value.text = absence.amountText(month)
     row.itemView.alpha = if (absence.approved) 1f else 0.6f
 }
 

@@ -16,6 +16,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.widget.doAfterTextChanged
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputLayout
 import java.time.LocalDate
@@ -39,6 +40,9 @@ fun showDriverDialog(context: Context, existing: Driver?) {
     val vacationPerYear = view.findViewById<EditText>(R.id.vacation_per_year)
     val vacationBalance = view.findViewById<EditText>(R.id.vacation_balance)
     val asOfButton = view.findViewById<Button>(R.id.vacation_as_of)
+    val birthYear = view.findViewById<EditText>(R.id.birth_year)
+    val caresForChild = view.findViewById<CheckBox>(R.id.cares_for_child)
+    val entitlement = view.findViewById<TextView>(R.id.entitlement)
     val defaults = existing ?: Driver(name = "", type = WorkerType.EMPLOYEE, hourlyRate = 0.0)
     var asOf: LocalDate = defaults.vacationAsOf ?: LocalDate.now().withDayOfMonth(1).minusDays(1)
 
@@ -72,8 +76,28 @@ fun showDriverDialog(context: Context, existing: Driver?) {
         employeeFields.visibility = if (employee) View.VISIBLE else View.GONE
     }
 
+    fun year() = birthYear.text.toString().toIntOrNull()?.takeIf { it in 1900..LocalDate.now().year }
+    fun showEntitlement() {
+        val now = LocalDate.now().year
+        val d = defaults.copy(
+            vacationPerYear = vacationPerYear.text.toString().toIntOrNull() ?: 20,
+            birthYear = year(),
+            caresForChild = caresForChild.isChecked,
+        )
+        val turns33 = d.birthYear?.let { it + 33 }?.takeIf { it > now && !d.caresForChild }
+        entitlement.text = "Nárok $now: ${d.vacationEntitlement(now)} dní" +
+            (d.vacationReason(now)?.let { " ($it)" } ?: "") +
+            (turns33?.let { " · od $it ${d.vacationEntitlement(it)} dní" } ?: "") +
+            "\nLekár ${Doctor.DAYS_PER_YEAR} dní + sprevádzanie ${Doctor.DAYS_PER_YEAR} dní ročne"
+    }
+    birthYear.setText(defaults.birthYear?.toString().orEmpty())
+    caresForChild.isChecked = defaults.caresForChild
+    caresForChild.setOnCheckedChangeListener { _, _ -> showEntitlement() }
+    listOf(birthYear, vacationPerYear).forEach { it.doAfterTextChanged { showEntitlement() } }
+
     weeklyHours.setText(Fmt.decimal(defaults.weeklyHours))
     vacationPerYear.setText(defaults.vacationPerYear.toString())
+    showEntitlement()
     vacationBalance.setText(defaults.vacationBalance?.let(Fmt::decimal).orEmpty())
     if (existing != null) {
         name.setText(existing.name)
@@ -131,6 +155,8 @@ fun showDriverDialog(context: Context, existing: Driver?) {
                 vacationPerYear = vacationPerYear.text.toString().toIntOrNull() ?: 20,
                 vacationBalance = balance,
                 vacationAsOf = if (balance != null) asOf else null,
+                birthYear = year(),
+                caresForChild = caresForChild.isChecked,
             )
         )
         dialog.dismiss()
@@ -236,28 +262,62 @@ fun showEndShiftDialog(context: Context, title: String, shift: Shift, byDriver: 
     }
 }
 
+/** "2,5" -> 2.5; only a part of a working day (more than 0, at most 24 h). */
+private fun parseHours(text: String): Double? = text.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 && it <= 24 }
+
+/** Doctor's visits left for [type] this year, e.g. "Zostáva 45,5 h z 56 h → po schválení 43 h". */
+private fun doctorInfo(driver: Driver, absences: List<Absence>, type: AbsenceType, minutes: Long): String {
+    val left = Doctor.leftMinutes(driver, absences, type, LocalDate.now().year)
+    return "Zostáva ${Fmt.hoursShort(left)} h z ${Fmt.hoursShort(Doctor.allowanceMinutes(driver))} h" +
+        (if (minutes > 0) " → po schválení ${Fmt.hoursShort(left - minutes)} h" else "") +
+        (if (left - minutes < 0) "\n⚠ Nad ročný nárok – zvyšok by bol neplatené voľno." else "")
+}
+
 /**
- * The driver asks for a vacation on the phone. [left] is the balance after the approved vacations (null if unknown);
- * the owner sees the request in the Dovolenky tab.
+ * The driver asks for a vacation or a doctor's visit on the phone; the owner sees the request in the Dovolenky tab.
+ * A doctor's visit can be a few hours of one day (or whole days when the hours are left empty).
+ * [vacationLeft] is the vacation balance after the approved vacations; [absences] this year's absences (doctor balance).
  */
-fun showVacationRequestDialog(context: Context, driverId: String, left: Double?) {
+fun showAbsenceRequestDialog(context: Context, driver: Driver, vacationLeft: Double?, absences: List<Absence>) {
+    var type = AbsenceType.VACATION
     var from = LocalDate.now().plusDays(1)
     var to = from
+    val typeButton = pickerButton(context, R.drawable.ic_label)
     val fromButton = pickerButton(context, R.drawable.ic_event)
     val toButton = pickerButton(context, R.drawable.ic_event)
+    val hours = textField(context, "Hodiny (napr. 2,5) – prázdne = celý deň", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
     val note = textField(context, "Poznámka (nepovinné)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)
     val info = TextView(context).apply {
         setPadding(0, 24, 0, 0)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
     }
+    fun hoursValue() = if (type.byHours) parseHours(hours.value) else null
     fun days() = Payroll.workingDays(from, to)
     fun refresh() {
-        fromButton.text = "Od ${from.format(Fmt.DAY)} ${from.year}"
+        val h = hoursValue()
+        if (h != null) to = from
+        typeButton.text = type.label
+        fromButton.text = (if (h != null) "Dňa " else "Od ") + "${from.format(Fmt.DAY)} ${from.year}"
         toButton.text = "Do ${to.format(Fmt.DAY)} ${to.year}"
+        toButton.visibility = if (h != null) View.GONE else View.VISIBLE
+        hours.visibility = if (type.byHours) View.VISIBLE else View.GONE
         info.text = when {
             to.isBefore(from) -> "Koniec je pred začiatkom"
-            else -> "Pracovných dní: ${days()}" + (left?.let { "\nZostatok dovolenky: ${Vacation.days(it)} → po schválení ${Vacation.days(it - days())}" } ?: "")
+            type.byHours -> {
+                val minutes = h?.let { Math.round(it * 60) } ?: (days() * driver.dailyMinutes)
+                (if (h != null) "${Fmt.decimal(h)} h" else "Pracovných dní: ${days()}") + "\n" +
+                    doctorInfo(driver, absences, type, minutes)
+            }
+            else -> "Pracovných dní: ${days()}" +
+                (vacationLeft?.let { "\nZostatok dovolenky: ${Vacation.days(it)} → po schválení ${Vacation.days(it - days())}" } ?: "")
         }
+    }
+    typeButton.setOnClickListener {
+        val types = AbsenceType.entries.filter { it.requestable }
+        MaterialAlertDialogBuilder(context)
+            .setTitle("O čo žiadaš?")
+            .setItems(types.map { it.label }.toTypedArray()) { _, which -> type = types[which]; refresh() }
+            .show()
     }
     fromButton.setOnClickListener {
         DatePickerDialog(context, { _, y, m, d ->
@@ -269,22 +329,29 @@ fun showVacationRequestDialog(context: Context, driverId: String, left: Double?)
     toButton.setOnClickListener {
         DatePickerDialog(context, { _, y, m, d -> to = LocalDate.of(y, m + 1, d); refresh() }, to.year, to.monthValue - 1, to.dayOfMonth).show()
     }
+    hours.editText?.doAfterTextChanged { refresh() }
     refresh()
     val dialog = MaterialAlertDialogBuilder(context)
-        .setTitle("Žiadosť o dovolenku")
+        .setTitle("Žiadosť o voľno")
         .setIcon(R.drawable.ic_beach)
-        .setMessage("Žiadosť pošleš majiteľovi na schválenie.")
-        .setView(dialogForm(context, fromButton, toButton, note, info))
+        .setMessage("Dovolenku alebo lekára pošleš majiteľovi na schválenie.")
+        .setView(dialogForm(context, typeButton, fromButton, toButton, hours, note, info))
         .setPositiveButton("Poslať žiadosť", null)
         .setNegativeButton("Zrušiť", null)
         .show()
     dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
         if (to.isBefore(from)) return@setOnClickListener
-        if (days() == 0) {
+        if (type.byHours && hours.value.isNotBlank() && hoursValue() == null) {
+            hours.error = "Zadaj hodiny, napr. 2,5"
+            return@setOnClickListener
+        }
+        hours.error = null
+        val h = hoursValue()
+        if (h == null && days() == 0) {
             info.text = "V zvolenom období nie je žiadny pracovný deň."
             return@setOnClickListener
         }
-        Repo.requestVacation(driverId, from, to, note.value.trim().take(200))
+        Repo.requestAbsence(driver.id, type, from, if (h != null) from else to, note.value.trim().take(200), h)
         Toast.makeText(context, "Žiadosť odoslaná", Toast.LENGTH_SHORT).show()
         dialog.dismiss()
     }
@@ -296,19 +363,28 @@ fun showOwnRequestDialog(context: Context, absence: Absence) {
     MaterialAlertDialogBuilder(context)
         .setTitle(if (waiting) "Zrušiť žiadosť?" else "Žiadosť bola zamietnutá")
         .setIcon(R.drawable.ic_beach)
-        .setMessage("${absence.type.label} ${dateRange(absence)} · ${Fmt.count(absence.workingDays, "pracovný deň", "pracovné dni", "pracovných dní")}")
+        .setMessage("${absence.type.label} ${dateRange(absence)} · ${absence.amountText()}")
         .setPositiveButton(if (waiting) "Zrušiť žiadosť" else "Odstrániť zo zoznamu") { _, _ -> Repo.deleteAbsence(absence) }
         .setNegativeButton("Späť", null)
         .show()
 }
 
-/** The owner approves or rejects a driver's vacation request; [left] is the driver's balance before it. */
-fun showRequestDecisionDialog(context: Context, absence: Absence, driverName: String, left: Double?) {
+/**
+ * The owner approves or rejects a driver's request; shows what it does to the vacation balance ([left]) or, for a
+ * doctor's visit, to the yearly doctor allowance ([absences] = the driver's absences this year).
+ */
+fun showRequestDecisionDialog(context: Context, absence: Absence, driver: Driver?, left: Double?, absences: List<Absence>) {
     val days = absence.workingDays
+    val driverName = driver?.name.orEmpty()
     val message = listOfNotNull(
-        "${dateRange(absence)} · ${Fmt.count(days, "pracovný deň", "pracovné dni", "pracovných dní")}",
+        "${dateRange(absence)} · " + (absence.hours?.let { "${Fmt.decimal(it)} h" }
+            ?: Fmt.count(days, "pracovný deň", "pracovné dni", "pracovných dní")),
         absence.note.ifBlank { null }?.let { "„$it“" },
-        left?.let { "Zostatok dovolenky: ${Vacation.days(it)} → po schválení ${Vacation.days(it - days)}" },
+        if (absence.type.byHours) {
+            driver?.let { doctorInfo(it, absences.filter { a -> a.id != absence.id }, absence.type, absence.minutesBetween(absence.from, absence.to, it.dailyMinutes)) }
+        } else {
+            left?.let { "Zostatok dovolenky: ${Vacation.days(it)} → po schválení ${Vacation.days(it - days)}" }
+        },
     ).joinToString("\n")
     MaterialAlertDialogBuilder(context)
         .setTitle("$driverName – ${absence.type.label.lowercase()}")
@@ -338,17 +414,31 @@ fun showAbsenceDialog(context: Context, driverId: String, existing: Absence?, de
     val fromButton = pickerButton(context, R.drawable.ic_event)
     val toButton = pickerButton(context, R.drawable.ic_event)
     val note = textField(context, "Poznámka", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES, existing?.note.orEmpty())
+    val hours = textField(
+        context, "Hodiny (napr. 2,5) – prázdne = celé dni", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
+        existing?.hours?.let(Fmt::decimal).orEmpty(),
+    )
     val info = TextView(context).apply {
         setPadding(0, 24, 0, 0)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
     }
+    fun hoursValue() = if (type.byHours) parseHours(hours.value) else null
     fun refresh() {
+        val h = hoursValue()
+        if (h != null) to = from
         typeButton.text = type.label
-        fromButton.text = "Od ${from.format(Fmt.DAY)} ${from.year}"
+        fromButton.text = (if (h != null) "Dňa " else "Od ") + "${from.format(Fmt.DAY)} ${from.year}"
         toButton.text = "Do ${to.format(Fmt.DAY)} ${to.year}"
+        toButton.visibility = if (h != null) View.GONE else View.VISIBLE
+        hours.visibility = if (type.byHours) View.VISIBLE else View.GONE
         val days = generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(to) }.count { Payroll.isWorkingDay(it) }
-        info.text = if (to.isBefore(from)) "Koniec je pred začiatkom" else "Pracovných dní: $days"
+        info.text = when {
+            to.isBefore(from) -> "Koniec je pred začiatkom"
+            h != null -> "${Fmt.decimal(h)} h"
+            else -> "Pracovných dní: $days"
+        }
     }
+    hours.editText?.doAfterTextChanged { refresh() }
     typeButton.setOnClickListener {
         MaterialAlertDialogBuilder(context)
             .setTitle("Druh neprítomnosti")
@@ -369,15 +459,20 @@ fun showAbsenceDialog(context: Context, driverId: String, existing: Absence?, de
     val builder = MaterialAlertDialogBuilder(context)
         .setTitle(if (existing == null) "Neprítomnosť" else "Upraviť neprítomnosť")
         .setIcon(R.drawable.ic_event_busy)
-        .setView(dialogForm(context, typeButton, fromButton, toButton, note, info))
+        .setView(dialogForm(context, typeButton, fromButton, toButton, hours, note, info))
         .setPositiveButton("Uložiť", null)
         .setNegativeButton("Zrušiť", null)
     if (existing != null) builder.setNeutralButton("Vymazať") { _, _ -> Repo.deleteAbsence(existing) }
     val dialog = builder.show()
     dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
         if (to.isBefore(from)) return@setOnClickListener
+        if (type.byHours && hours.value.isNotBlank() && hoursValue() == null) {
+            hours.error = "Zadajte hodiny, napr. 2,5"
+            return@setOnClickListener
+        }
+        val h = hoursValue()
         val status = existing?.status ?: AbsenceStatus.APPROVED
-        Repo.saveAbsence(Absence(existing?.id.orEmpty(), driverId, type, from, to, note.value.trim(), status))
+        Repo.saveAbsence(Absence(existing?.id.orEmpty(), driverId, type, from, if (h != null) from else to, note.value.trim(), status, h))
         dialog.dismiss()
     }
 }

@@ -109,7 +109,7 @@ class DriverActivity : AppCompatActivity() {
         deliveriesButton.setOnClickListener { DeliveriesActivity.open(this, workDay()) }
         findViewById<View>(R.id.locations).setOnClickListener { LocationsActivity.openForDriver(this) }
         vacationButton = findViewById(R.id.vacation)
-        vacationButton.setOnClickListener { showVacationRequestDialog(this, driverId, vacationLeft()) }
+        vacationButton.setOnClickListener { driver?.let { showAbsenceRequestDialog(this, it, vacationLeft(), vacationAbsences) } }
         addShiftButton = findViewById(R.id.add_shift)
         addShiftButton.setOnClickListener {
             showShiftDialog(this, driverId, null, LocalDate.now().minusDays(1), vehicles, byDriver = true)
@@ -169,7 +169,7 @@ class DriverActivity : AppCompatActivity() {
             if (driver == null) Repo.linkPhone(driverId) // lets this phone see the other drivers' locations
             driver = d
             title = d.name
-            vacationListener["v"] = Repo.listenAbsencesAfter(driverId, Vacation.countedFrom(d, LocalDate.now().year)) {
+            vacationListener["v"] = Repo.listenAbsencesAfter(driverId, Vacation.listenFrom(d, LocalDate.now().year)) {
                 vacationAbsences = it
                 render()
             }

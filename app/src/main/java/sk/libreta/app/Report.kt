@@ -13,15 +13,17 @@ data class DriverSummary(
     val nightShiftMinutes: Long = 0,
     /** Days with a day shift (started 5:00–16:59), each paid with the employee's fixed day rate. */
     val dayShifts: Int = 0,
-    /** Working days of each absence type in the month. */
+    /** Working days of each absence type in the month (absences entered in hours not included). */
     val absenceDays: Map<AbsenceType, Int> = emptyMap(),
+    /** Minutes of each absence type in the month: hours as entered, days × the contract's day. */
+    val absenceMinutesByType: Map<AbsenceType, Long> = emptyMap(),
     val km: Int = 0,
     /** Fund of working time (fond pracovného času) under the driver's contract; 0 for workers on an agreement. */
     val fundDays: Int = 0,
     val fundMinutes: Long = 0,
 ) {
     /** Absence days converted to hours of the contract, as on the payslip ("Dovolenka 2 d 16 h"). */
-    fun absenceMinutes(type: AbsenceType): Long = (absenceDays[type] ?: 0) * driver.dailyMinutes
+    fun absenceMinutes(type: AbsenceType): Long = absenceMinutesByType[type] ?: 0
 
     /**
      * Part-time worker: all hours at the hourly rate. Employee: the fixed day rate for each day with a day shift
@@ -70,7 +72,10 @@ object Report {
             surcharges = Payroll.surcharges(finished),
             nightShiftMinutes = finished.sumOf { Payroll.nightShiftMinutes(it) },
             dayShifts = Payroll.dayShiftDays(finished),
-            absenceDays = absences.filter { it.approved }.groupBy { it.type }.mapValues { (_, list) -> list.sumOf { it.workingDaysIn(month) } },
+            absenceDays = absences.filter { it.approved && it.hours == null }.groupBy { it.type }
+                .mapValues { (_, list) -> list.sumOf { it.workingDaysIn(month) } },
+            absenceMinutesByType = absences.filter { it.approved }.groupBy { it.type }
+                .mapValues { (_, list) -> list.sumOf { it.minutesIn(month, driver.dailyMinutes) } },
             km = finished.sumOf { it.km ?: 0 },
             fundDays = fundDays,
             fundMinutes = fundDays * driver.dailyMinutes,
@@ -96,7 +101,9 @@ object Report {
                 items.sumOf { it.days }, Fmt.hm(minutes), Fmt.hours(minutes),
                 Fmt.hours(s.night), Fmt.hours(s.saturday), Fmt.hours(s.sunday), Fmt.hours(s.holiday), Fmt.hours(s.overtime),
                 Fmt.hours(items.sumOf { it.nightShiftMinutes }), items.sumOf { it.dayShifts },
-                *AbsenceType.entries.map { type -> items.sumOf { it.absenceDays[type] ?: 0 } }.toTypedArray(),
+                *AbsenceType.entries.map { type ->
+                    if (type.byHours) Fmt.hours(items.sumOf { it.absenceMinutes(type) }) else items.sumOf { it.absenceDays[type] ?: 0 }
+                }.toTypedArray(),
                 items.sumOf { it.km },
             )
         }
@@ -107,7 +114,7 @@ object Report {
         row(
             "Meno", "Typ", "Odpracované dni", "Hodiny (h:mm)", "Hodiny",
             "Noc (h)", "Sobota (h)", "Nedeľa (h)", "Sviatok (h)", "Nadčas nad 8 h/smenu (h)", "Nočné smeny (h)", "Denné smeny (dni)",
-            *AbsenceType.entries.map { "${it.label} (dni)" }.toTypedArray(),
+            *AbsenceType.entries.map { if (it.byHours) "${it.label} (h)" else "${it.label} (dni)" }.toTypedArray(),
             "Km", "Sadzba €/h (brigádnik)", "Denná suma €", "Nočná €/h", "Suma €",
             "Úväzok (h/týždeň)", "Fond (dni)", "Fond (h)", "Dovolenka (h)", "Zostatok dovolenky (dni)",
         )
@@ -165,10 +172,13 @@ object Report {
         if (ownAbsences.isNotEmpty()) {
             row("")
             row("NEPRÍTOMNOSTI")
-            row("Meno", "Typ", "Druh", "Od", "Do", "Pracovné dni v mesiaci", "Poznámka")
+            row("Meno", "Typ", "Druh", "Od", "Do", "Pracovné dni v mesiaci", "Hodiny", "Poznámka")
             for (a in ownAbsences.sortedWith(compareBy({ order[it.driverId] }, { it.from }))) {
                 val driver = drivers.getValue(a.driverId)
-                row(driver.name, driver.type.label, a.type.label, a.from.format(Fmt.DATE), a.to.format(Fmt.DATE), a.workingDaysIn(month), a.note)
+                row(
+                    driver.name, driver.type.label, a.type.label, a.from.format(Fmt.DATE), a.to.format(Fmt.DATE),
+                    if (a.hours == null) a.workingDaysIn(month) else "", Fmt.hours(a.minutesIn(month, driver.dailyMinutes)), a.note,
+                )
             }
         }
         return out.toString()

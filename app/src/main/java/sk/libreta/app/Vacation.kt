@@ -4,10 +4,16 @@ import java.time.LocalDate
 
 /**
  * Vacation balance (zostatok dovolenky) of an employee. It starts from the balance the owner copied from the last payslip
- * (or from 0 on 31 December of the previous year), adds [Driver.vacationPerYear] for every new year and takes off
+ * (or from 0 on 31 December of the previous year), adds [Driver.vacationEntitlement] for every new year and takes off
  * the working days of approved vacations after that date.
  */
 object Vacation {
+
+    /** Days for employees aged 33+ or caring for a child. */
+    const val LONGER_DAYS = 25
+
+    /** Absences ending after this day are needed: for the vacation balance and this year's doctor's visits. */
+    fun listenFrom(driver: Driver, year: Int): LocalDate = minOf(countedFrom(driver, year), LocalDate.of(year - 1, 12, 31))
 
     /** The day the balance is counted from; absences ending after it are needed (see [Repo.listenAbsencesAfter]). */
     fun countedFrom(driver: Driver, year: Int): LocalDate = driver.vacationAsOf ?: LocalDate.of(year - 1, 12, 31)
@@ -21,7 +27,8 @@ object Vacation {
         val start = countedFrom(driver, year)
         if (start.isAfter(until) || start.year > year) return null
         val base = if (driver.vacationAsOf != null) driver.vacationBalance ?: 0.0 else 0.0
-        return base + driver.vacationPerYear * (year - start.year) - used(absences, start.plusDays(1), until)
+        val added = (start.year + 1..year).sumOf { driver.vacationEntitlement(it) }
+        return base + added - used(absences, start.plusDays(1), until)
     }
 
     /** Working days of approved vacations between [first] and [last]. */
