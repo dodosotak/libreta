@@ -35,7 +35,27 @@ data class Driver(
     /** Vacation days left after [vacationAsOf], copied from the last payslip; null = only [vacationPerYear] from 1 January. */
     val vacationBalance: Double? = null,
     val vacationAsOf: LocalDate? = null,
+    /** For the vacation entitlement: from the year the employee turns 33 it is 25 days. */
+    val birthYear: Int? = null,
+    /** Permanently cares for a child – 25 days of vacation whatever the age. */
+    val caresForChild: Boolean = false,
 ) {
+    /**
+     * Vacation days for [year] (Zákonník práce § 103): 25 if the employee turns 33 by the end of that year or cares
+     * for a child, otherwise [vacationPerYear] (20, or more if the owner gives more).
+     */
+    fun vacationEntitlement(year: Int): Int {
+        val longer = caresForChild || (birthYear != null && year - birthYear >= 33)
+        return if (longer) maxOf(vacationPerYear, Vacation.LONGER_DAYS) else vacationPerYear
+    }
+
+    /** Why the entitlement is 25 – shown next to it. */
+    fun vacationReason(year: Int): String? = when {
+        vacationEntitlement(year) == vacationPerYear -> null
+        caresForChild -> "stará sa o dieťa"
+        else -> "vek 33+"
+    }
+
     /** Hours of one working day under the contract, e.g. 4 h for a 20 h week. */
     val dailyMinutes: Long get() = Math.round(weeklyHours * 60 / 5)
 
@@ -64,12 +84,49 @@ data class Vehicle(
     val label: String get() = if (name.isBlank()) plate else "$plate · $name"
 }
 
-enum class AbsenceType(val label: String) {
-    VACATION("Dovolenka"),
-    SICK("PN"),
-    CARE("OČR"),
-    COMP_OFF("Náhradné voľno"),
-    UNPAID("Neplatené voľno"),
+/** [byHours]: may be entered in hours (a doctor's visit often takes only part of a day). [short] is for table columns. */
+enum class AbsenceType(val label: String, val short: String, val byHours: Boolean = false) {
+    VACATION("Dovolenka", "Dovol."),
+    SICK("PN", "PN"),
+    CARE("OČR", "OČR"),
+    COMP_OFF("Náhradné voľno", "N. voľno"),
+    UNPAID("Neplatené voľno", "Nepl."),
+    /** Own doctor's visit – paid up to [Doctor.DAYS_PER_YEAR] days a year. */
+    DOCTOR("Lekár", "Lekár", byHours = true),
+    /** Accompanying a family member to the doctor – also up to [Doctor.DAYS_PER_YEAR] days a year. */
+    DOCTOR_FAMILY("Lekár – sprevádzanie", "Sprev.", byHours = true);
+
+    /** What a driver may ask for from the phone (the owner approves it). */
+    val requestable: Boolean get() = this == VACATION || byHours
+
+    companion object {
+        val DOCTOR_TYPES = listOf(DOCTOR, DOCTOR_FAMILY)
+    }
+}
+
+/**
+ * Doctor's visits (paragraf, "P-čko") of an employee: 7 days a year for themselves and 7 for accompanying a family
+ * member, counted in hours of the contract (7 × 8 h = 56 h for a full-time employee) because visits often take hours.
+ */
+object Doctor {
+    const val DAYS_PER_YEAR = 7
+
+    fun allowanceMinutes(driver: Driver): Long = DAYS_PER_YEAR * driver.dailyMinutes
+
+    /** Minutes of approved visits of [type] in [year]. */
+    fun usedMinutes(driver: Driver, absences: List<Absence>, type: AbsenceType, year: Int): Long =
+        absences.filter { it.type == type && it.approved }
+            .sumOf { it.minutesBetween(LocalDate.of(year, 1, 1), LocalDate.of(year, 12, 31), driver.dailyMinutes) }
+
+    fun leftMinutes(driver: Driver, absences: List<Absence>, type: AbsenceType, year: Int): Long =
+        allowanceMinutes(driver) - usedMinutes(driver, absences, type, year)
+
+    /** "Lekár 10,5 / 56 h · sprevádzanie 0 / 56 h" */
+    fun summary(driver: Driver, absences: List<Absence>, year: Int): String {
+        val total = Fmt.hoursShort(allowanceMinutes(driver))
+        return "Lekár ${Fmt.hoursShort(usedMinutes(driver, absences, AbsenceType.DOCTOR, year))} / $total h · " +
+            "sprevádzanie ${Fmt.hoursShort(usedMinutes(driver, absences, AbsenceType.DOCTOR_FAMILY, year))} / $total h"
+    }
 }
 
 enum class AbsenceStatus(val label: String) {
@@ -90,9 +147,24 @@ data class Absence(
     val to: LocalDate,
     val note: String = "",
     val status: AbsenceStatus = AbsenceStatus.APPROVED,
+    /** Only for [AbsenceType.byHours] on a single day: the hours away (e.g. 2.5); null = whole working days. */
+    val hours: Double? = null,
 ) {
     /** Only approved absences count in reports and the vacation balance. */
     val approved: Boolean get() = status == AbsenceStatus.APPROVED
+
+    /** Minutes away between [first] and [last]: the hours, or working days × the contract's day. */
+    fun minutesBetween(first: LocalDate, last: LocalDate, dailyMinutes: Long): Long {
+        val h = hours ?: return workingDaysBetween(first, last) * dailyMinutes
+        return if (from.isBefore(first) || from.isAfter(last)) 0 else Math.round(h * 60)
+    }
+
+    fun minutesIn(month: YearMonth, dailyMinutes: Long): Long = minutesBetween(month.atDay(1), month.atEndOfMonth(), dailyMinutes)
+
+    /** "2,5 h" for hours, "3 dni" for days (in [month] if given). */
+    fun amountText(month: YearMonth? = null): String =
+        hours?.let { "${Fmt.decimal(it)} h" }
+            ?: Fmt.count(if (month != null) workingDaysIn(month) else workingDays, "deň", "dni", "dní")
 
     /** Working days (Mon–Fri, not a public holiday) of this absence that fall into [month]. */
     fun workingDaysIn(month: YearMonth): Int = workingDaysBetween(month.atDay(1), month.atEndOfMonth())
@@ -154,6 +226,9 @@ object Fmt {
 
     /** 510 -> "8:30" */
     fun hm(minutes: Long) = "%d:%02d".format(minutes / 60, minutes % 60)
+
+    /** 630 -> "10,5", 3360 -> "56" */
+    fun hoursShort(minutes: Long): String = decimal(Math.round(minutes / 60.0 * 100) / 100.0)
 
     /** 510 -> "8,50" */
     fun hours(minutes: Long): String = String.format(SK, "%.2f", minutes / 60.0)

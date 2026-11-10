@@ -141,7 +141,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="4dp"
                 android:layout_weight="1"
-                android:hint="Dovolenka"
+                android:hint="Základná dovolenka"
                 app:suffixText="dní/rok">
 
                 <com.google.android.material.textfield.TextInputEditText
@@ -152,6 +152,46 @@
                     android:inputType="number" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
+
+        <!-- 25 days from the year the employee turns 33, or when caring for a child (computed, see Driver.vacationEntitlement). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical">
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:hint="Rok narodenia">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/birth_year"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:maxLength="4" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cares_for_child"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="Stará sa o dieťa" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/entitlement"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAppearance="?attr/textAppearanceBody2"
+            android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="match_parent"

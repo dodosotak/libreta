@@ -249,10 +249,16 @@ service cloud.firestore {
           && isOpen(request.resource.data.from) && isOpen(request.resource.data.to);
         allow delete: if isOwner() && isOpen(resource.data.from) && isOpen(resource.data.to);
 
-        // Vacation request from the driver's phone: always waits for the owner, who approves or rejects it (update above).
+        // Request from the driver's phone – a vacation or a doctor's visit (own or accompanying a family member, optionally
+        // a number of hours on one day): always waits for the owner, who approves or rejects it (update above).
         allow create: if isDriver() && driver().active == true
-          && request.resource.data.keys().hasOnly(['type', 'from', 'to', 'note', 'status', 'requestedAt'])
-          && request.resource.data.type == 'VACATION'
+          && request.resource.data.keys().hasOnly(['type', 'from', 'to', 'note', 'status', 'requestedAt', 'hours'])
+          && request.resource.data.type in ['VACATION', 'DOCTOR', 'DOCTOR_FAMILY']
+          && (request.resource.data.get('hours', null) == null
+            || (request.resource.data.type in ['DOCTOR', 'DOCTOR_FAMILY']
+              && request.resource.data.hours is number
+              && request.resource.data.hours > 0 && request.resource.data.hours <= 24
+              && request.resource.data.from == request.resource.data.to))
           && request.resource.data.status == 'PENDING'
           && request.resource.data.from is string && request.resource.data.from.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
           && request.resource.data.to is string && request.resource.data.to.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')

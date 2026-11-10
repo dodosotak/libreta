@@ -33,9 +33,10 @@ object PdfReport {
 
     // Payroll basis, landscape: days / hours of the contract like on the payslip
     private val BASIS_COLUMNS = listOf(
-        "Meno" to 0f, "Úväzok" to 115f, "Fond d / h" to 160f, "Odprac. d / h" to 230f, "Dovol. d / h" to 300f,
-        "PN" to 362f, "OČR" to 390f, "N. voľno" to 420f, "Nepl." to 462f, "Noc h" to 495f, "So h" to 533f,
-        "Ne h" to 566f, "Sviatok h" to 599f, "Nadčas h" to 645f, "Nočná h" to 690f, "Zost. dov." to 730f,
+        "Meno" to 0f, "Úväzok" to 100f, "Fond d / h" to 140f, "Odprac. d / h" to 205f, "Dovol. d / h" to 272f,
+        "PN" to 330f, "OČR" to 355f, "N. voľno" to 383f, "Nepl." to 422f, "Lekár h" to 450f, "Sprev. h" to 487f,
+        "Noc h" to 525f, "So h" to 557f, "Ne h" to 586f, "Sviatok h" to 615f, "Nadčas h" to 655f, "Nočná h" to 697f,
+        "Zost. dov." to 737f,
     )
 
     private val PART_TIME_COLUMNS = listOf(
@@ -95,6 +96,8 @@ object PdfReport {
                         days(s, AbsenceType.CARE),
                         days(s, AbsenceType.COMP_OFF),
                         days(s, AbsenceType.UNPAID),
+                        hours(s.absenceMinutes(AbsenceType.DOCTOR)),
+                        hours(s.absenceMinutes(AbsenceType.DOCTOR_FAMILY)),
                         hours(sur.night),
                         hours(sur.saturday),
                         hours(sur.sunday),
@@ -132,15 +135,16 @@ object PdfReport {
             w.gap(12f)
             w.text("Neprítomnosti", w.bold)
             for (a in approved) {
-                w.text("${names[a.driverId]} – ${a.type.label}: ${a.from.format(Fmt.DATE)} – ${a.to.format(Fmt.DATE)} " +
-                    "(${Fmt.count(a.workingDaysIn(month), "pracovný deň", "pracovné dni", "pracovných dní")} v mesiaci)" +
+                val amount = a.hours?.let { "${Fmt.decimal(it)} h" }
+                    ?: "${Fmt.count(a.workingDaysIn(month), "pracovný deň", "pracovné dni", "pracovných dní")} v mesiaci"
+                w.text("${names[a.driverId]} – ${a.type.label}: ${a.from.format(Fmt.DATE)} – ${a.to.format(Fmt.DATE)} ($amount)" +
                     a.note.ifBlank { null }?.let { " · $it" }.orEmpty(), w.normal)
             }
         }
 
         val warnings = listOfNotNull(
             absences.count { it.status == AbsenceStatus.PENDING && it.driverId in names }.takeIf { it > 0 }
-                ?.let { "Žiadosti o dovolenku čakajú na schválenie ($it) – nie sú započítané." },
+                ?.let { "Žiadosti o voľno čakajú na schválenie ($it) – nie sú započítané." },
             shifts.count { it.end == null && it.driverId in names }.takeIf { it > 0 }
                 ?.let { "Neukončené smeny ($it) nie sú započítané." },
             shifts.count { it.addedLater && it.end != null && it.driverId in names }.takeIf { it > 0 }
@@ -154,7 +158,8 @@ object PdfReport {
 
         w.gap(12f)
         w.text("Hodiny sú v desatinnom tvare. Fond = pracovné dni × úväzok / 5, dovolenka v hodinách = dni × úväzok / 5, " +
-            "nadčas = práca nad 8 h v jednej smene, nočná = smeny začaté od 17:00 do 5:00 (vlastná sadzba firmy).", w.small)
+            "nadčas = práca nad 8 h v jednej smene, nočná = smeny začaté od 17:00 do 5:00 (vlastná sadzba firmy). " +
+            "Lekár / sprevádzanie rodinného príslušníka v hodinách (nárok ${Doctor.DAYS_PER_YEAR} dní ročne na každé).", w.small)
         w.text("Zostatok dovolenky k ${month.atEndOfMonth().format(Fmt.DATE)} vrátane čerpania v tomto mesiaci. " +
             "Vytvorené v aplikácii Libreta ${LocalDate.now().format(Fmt.DATE)}", w.small)
         w.finish()

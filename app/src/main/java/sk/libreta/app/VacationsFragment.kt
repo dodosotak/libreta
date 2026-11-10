@@ -12,8 +12,8 @@ import java.time.LocalDate
 import java.time.YearMonth
 
 /**
- * Vacations of all drivers: requests from their phones waiting for the owner, this year's balance per employee
- * and the approved vacations ahead. The accountant sees it read-only.
+ * Vacations of all drivers: requests (vacation, doctor's visits) from their phones waiting for the owner, this year's
+ * vacation balance and doctor's hours per employee and the approved vacations ahead. The accountant sees it read-only.
  */
 class VacationsFragment : Fragment(R.layout.fragment_list) {
 
@@ -47,13 +47,16 @@ class VacationsFragment : Fragment(R.layout.fragment_list) {
                     dateRange(entry),
                     entry.note.ifBlank { null },
                 ).joinToString(" · ")
-                row.value.text = Fmt.count(entry.workingDays, "deň", "dni", "dní")
+                row.value.text = entry.amountText()
                 row.itemView.setOnClickListener { onAbsenceClick(entry, name) }
             }
             is Balance -> {
                 row.title.text = entry.driver.name
-                row.subtitle.text = "Nárok ${entry.driver.vacationPerYear} d/rok · čerpané ${entry.used} · naplánované ${entry.planned}" +
-                    (entry.driver.vacationAsOf?.let { " · zostatok k ${it.format(Fmt.DATE)}" } ?: "")
+                val d = entry.driver
+                row.subtitle.text = "Nárok ${d.vacationEntitlement(year)} d/rok" + (d.vacationReason(year)?.let { " ($it)" } ?: "") +
+                    " · čerpané ${entry.used} · naplánované ${entry.planned}" +
+                    (d.vacationAsOf?.let { " · zostatok k ${it.format(Fmt.DATE)}" } ?: "") +
+                    "\n🩺 " + Doctor.summary(d, absencesByDriver[d.id].orEmpty(), year)
                 row.value.text = entry.left?.let { "${Vacation.days(it)} d" } ?: "–"
                 row.itemView.setOnClickListener {
                     if (Session.canEdit(requireContext())) showDriverDialog(requireContext(), entry.driver)
@@ -92,7 +95,7 @@ class VacationsFragment : Fragment(R.layout.fragment_list) {
     /** Waiting requests of every driver; absences since the balance date of every employee (the key changes with it). */
     private fun syncListeners() {
         val keys = drivers.map { "p:${it.id}" } +
-            drivers.filter { it.hasVacation }.map { "v:${it.id}:${Vacation.countedFrom(it, year)}" }
+            drivers.filter { it.hasVacation }.map { "v:${it.id}:${Vacation.listenFrom(it, year)}" }
         val ids = drivers.map { it.id }.toSet()
         pendingByDriver.keys.retainAll(ids)
         absencesByDriver.keys.retainAll(drivers.filter { it.hasVacation }.map { it.id }.toSet())
@@ -128,7 +131,7 @@ class VacationsFragment : Fragment(R.layout.fragment_list) {
         }
         section("Čakajú na schválenie (${pending.size})", pending)
         section("Naplánované dovolenky", ahead)
-        section("Zostatok dovolenky $year", balances)
+        section("Zostatok dovolenky a lekár $year", balances)
         adapter.items = items
         empty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
     }
@@ -142,7 +145,7 @@ class VacationsFragment : Fragment(R.layout.fragment_list) {
         val driver = drivers.find { it.id == absence.driverId }
         if (absence.status == AbsenceStatus.PENDING) {
             val left = driver?.let { Vacation.left(it, absencesByDriver[it.id].orEmpty(), year) }
-            showRequestDecisionDialog(context, absence, name, left)
+            showRequestDecisionDialog(context, absence, driver, left, absencesByDriver[absence.driverId].orEmpty())
         } else {
             ShiftsActivity.open(context, absence.driverId, YearMonth.from(absence.from))
         }

@@ -203,24 +203,28 @@ object Repo {
             "to" to absence.to.toString(),
             "note" to absence.note,
             "status" to absence.status.name,
+            "hours" to absence.hours?.takeIf { absence.type.byHours },
         )
         val collection = absencesOf(absence.driverId)
         val task = if (absence.id.isEmpty()) collection.add(data) else collection.document(absence.id).set(data, SetOptions.merge())
         task.addOnFailureListener(::report)
     }
 
-    /** The driver asks for a vacation from the phone; the owner approves or rejects it with [decideRequest]. */
-    fun requestVacation(driverId: String, from: LocalDate, to: LocalDate, note: String) {
-        absencesOf(driverId).add(
-            mapOf(
-                "type" to AbsenceType.VACATION.name,
-                "from" to from.toString(),
-                "to" to to.toString(),
-                "note" to note,
-                "status" to AbsenceStatus.PENDING.name,
-                "requestedAt" to FieldValue.serverTimestamp(),
-            )
-        ).addOnFailureListener(::report)
+    /**
+     * The driver asks for a vacation or a doctor's visit ([hours] for a part of one day) from the phone;
+     * the owner approves or rejects it with [decideRequest].
+     */
+    fun requestAbsence(driverId: String, type: AbsenceType, from: LocalDate, to: LocalDate, note: String, hours: Double? = null) {
+        val data = mutableMapOf<String, Any>(
+            "type" to type.name,
+            "from" to from.toString(),
+            "to" to to.toString(),
+            "note" to note,
+            "status" to AbsenceStatus.PENDING.name,
+            "requestedAt" to FieldValue.serverTimestamp(),
+        )
+        if (hours != null && type.byHours) data["hours"] = hours
+        absencesOf(driverId).add(data).addOnFailureListener(::report)
     }
 
     fun decideRequest(absence: Absence, approve: Boolean) {
@@ -278,6 +282,8 @@ object Repo {
             "phone" to driver.phone,
             "weeklyHours" to driver.weeklyHours,
             "vacationPerYear" to driver.vacationPerYear,
+            "birthYear" to driver.birthYear,
+            "caresForChild" to driver.caresForChild,
             "vacationBalance" to driver.vacationBalance,
             "vacationAsOf" to driver.vacationAsOf?.toString(),
         )
@@ -677,6 +683,8 @@ object Repo {
         vacationPerYear = doc.getLong("vacationPerYear")?.toInt() ?: 20,
         vacationBalance = doc.getDouble("vacationBalance"),
         vacationAsOf = doc.getString("vacationAsOf")?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+        birthYear = doc.getLong("birthYear")?.toInt(),
+        caresForChild = doc.getBoolean("caresForChild") ?: false,
     )
 
     /** Absences written before vacation requests existed have no status – they were entered by the owner. */
@@ -689,6 +697,7 @@ object Repo {
             to = LocalDate.parse(doc.getString("to")),
             note = doc.getString("note").orEmpty(),
             status = doc.getString("status")?.let { AbsenceStatus.valueOf(it) } ?: AbsenceStatus.APPROVED,
+            hours = doc.getDouble("hours"),
         )
     }.getOrNull()
 
