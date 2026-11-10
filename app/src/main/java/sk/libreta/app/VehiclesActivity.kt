@@ -1,5 +1,7 @@
 package sk.libreta.app
 
+import android.app.DatePickerDialog
+import android.content.DialogInterface
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
@@ -9,17 +11,25 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import java.time.LocalDate
 
-/** The owner's list of vehicles drivers choose from when they start a shift. */
+/** The owner's list of vehicles drivers choose from when they start a shift, with their deadlines (STK, insurance…). */
 class VehiclesActivity : AppCompatActivity() {
 
     private val listeners = Listeners()
     private lateinit var empty: TextView
 
     private val adapter = RowAdapter<Vehicle> { row, vehicle ->
+        val today = LocalDate.now()
+        val warnings = vehicle.warnings(today)
         row.title.text = vehicle.plate
-        row.subtitle.text = listOf(vehicle.name, if (vehicle.active) "" else "vyradené").filter { it.isNotBlank() }.joinToString(" · ")
-        row.value.text = ""
+        row.subtitle.text = listOfNotNull(
+            listOf(vehicle.name, if (vehicle.active) "" else "vyradené").filter { it.isNotBlank() }.joinToString(" · ").ifBlank { null },
+            warnings.joinToString("\n") { (d, date) -> VehicleDeadline.text(d, date, today) }.ifBlank { null },
+            VehicleDeadline.entries.filter { it in vehicle.deadlines && warnings.none { w -> w.first == it } }
+                .joinToString(" · ") { "${it.label} do ${vehicle.deadlines.getValue(it).format(Fmt.DATE)}" }.ifBlank { null },
+        ).joinToString("\n")
+        row.value.text = if (warnings.any { it.second.isBefore(today) }) "⛔" else if (warnings.isNotEmpty()) "⚠" else ""
         row.itemView.alpha = if (vehicle.active) 1f else 0.5f
         row.itemView.setOnClickListener { showVehicleDialog(vehicle) }
     }
@@ -61,6 +71,29 @@ class VehiclesActivity : AppCompatActivity() {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS, existing?.plate.orEmpty(),
         )
         val name = textField(this, "Popis (napr. Scania R450)", text = existing?.name.orEmpty())
+        // Deadlines: tap to pick the last valid day, "Nesledovať" clears it.
+        val deadlines = existing?.deadlines.orEmpty().toMutableMap()
+        val deadlineButtons = VehicleDeadline.entries.map { deadline ->
+            pickerButton(this, R.drawable.ic_event).also { button ->
+                fun show() {
+                    button.text = "${deadline.label}: " + (deadlines[deadline]?.let { "platí do ${it.format(Fmt.DATE)}" } ?: "nesledované")
+                }
+                show()
+                button.setOnClickListener {
+                    val current = deadlines[deadline] ?: LocalDate.now().plusYears(1)
+                    DatePickerDialog(this, { _, y, m, d -> deadlines[deadline] = LocalDate.of(y, m + 1, d); show() },
+                        current.year, current.monthValue - 1, current.dayOfMonth).apply {
+                        setTitle("${deadline.label} – platí do")
+                        setButton(DialogInterface.BUTTON_NEUTRAL, "Nesledovať") { _, _ -> deadlines.remove(deadline); show() }
+                    }.show()
+                }
+            }
+        }
+        val deadlinesTitle = TextView(this).apply {
+            text = "Termíny – upozorníme ${VehicleDeadline.WARN_DAYS} dní vopred"
+            setPadding(0, 32, 0, 4)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
         val active = MaterialCheckBox(this).apply {
             text = "V prevádzke"
             isChecked = existing?.active ?: true
@@ -69,18 +102,20 @@ class VehiclesActivity : AppCompatActivity() {
         val builder = MaterialAlertDialogBuilder(this)
             .setTitle(if (existing == null) "Nové vozidlo" else "Upraviť vozidlo")
             .setIcon(R.drawable.ic_truck)
-            .setView(dialogForm(this, plate, name, active))
+            .setView(android.widget.ScrollView(this).apply {
+                addView(dialogForm(this@VehiclesActivity, plate, name, active, deadlinesTitle, *deadlineButtons.toTypedArray()))
+            })
             .setPositiveButton("Uložiť", null)
             .setNegativeButton("Zrušiť", null)
         if (existing != null) builder.setNeutralButton("Odstrániť") { _, _ -> Repo.deleteVehicle(existing) }
         val dialog = builder.show()
-        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+        dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val p = plate.value.uppercase().filter { !it.isWhitespace() }
             if (p.isEmpty()) {
                 plate.error = "Zadajte ŠPZ"
                 return@setOnClickListener
             }
-            Repo.saveVehicle(Vehicle(existing?.id.orEmpty(), p, name.value.trim(), active.isChecked))
+            Repo.saveVehicle(Vehicle(existing?.id.orEmpty(), p, name.value.trim(), active.isChecked, deadlines.toMap()))
             dialog.dismiss()
         }
     }

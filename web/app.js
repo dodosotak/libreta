@@ -701,6 +701,7 @@ function renderLocations() {
   button.textContent = locating ? "Zisťujem polohu…" : mine ? "📍  Poslať polohu znova" : "📍  Poslať moju polohu";
   button.disabled = locating || driver.active === false;
   $("delete-location").hidden = !mine || locating;
+  renderMap();
 }
 
 /** Opens the position in Apple Maps on an iPhone, Google Maps elsewhere. */
@@ -741,6 +742,66 @@ $("send-location").addEventListener("click", () => {
         : "Skús to znova, najlepšie vonku.",
     });
   }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 60000 });
+});
+
+// ---------- map of all drivers (Leaflet + OpenStreetMap, no API key) ----------
+
+let map = null;
+let mapLayer = null;
+let mapFitted = false;
+
+$("show-map").addEventListener("click", () => {
+  $("map-screen").hidden = false;
+  if (!map) {
+    // Slovakia until the positions are drawn.
+    map = L.map("map").setView([48.67, 19.7], 7);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    mapLayer = L.layerGroup().addTo(map);
+  }
+  mapFitted = false;
+  // The map was created or shown while hidden – let it measure its size again.
+  setTimeout(() => { map.invalidateSize(); renderMap(); }, 0);
+});
+$("map-close").addEventListener("click", () => { $("map-screen").hidden = true; });
+
+/** Pins of everyone who sent a position in the last hours; the driver is "Ty". Redrawn with the list. */
+function renderMap() {
+  if (!map || $("map-screen").hidden) return;
+  const now = new Date();
+  const fresh = locations.filter((l) => l.lat != null && (!l.at || now - l.at < SHOWN_HOURS * 3600000));
+  mapLayer.clearLayers();
+  $("map-empty").hidden = fresh.length > 0;
+  for (const l of fresh) {
+    const me = l.id === driverId;
+    const contact = contacts.find((c) => c.id === l.id);
+    const name = me ? "Ty" : contact?.name || l.name || "";
+    const old = l.at && now - l.at > 30 * 60000;
+    const icon = L.divIcon({
+      className: "", iconSize: null,
+      html: `<div class="pin${me ? " me" : ""}${old ? " old" : ""}"><div class="dot"></div><div class="label">${escape(name)}</div></div>`,
+    });
+    const phone = (contact?.phone || "").replace(/[^0-9+]/g, "");
+    const popup = `<div class="map-popup"><b>${escape(name)}</b><div class="sub">${escape(locationAge(l, now))}</div>`
+      + (me ? "" : `<button data-map-nav="${escape(l.id)}">Navigovať</button>`)
+      + (phone && !me ? `<a class="call" href="tel:${escape(phone)}">Zavolať</a>` : "")
+      + `</div>`;
+    L.marker([l.lat, l.lng], { icon }).bindPopup(popup).addTo(mapLayer);
+    if (l.accuracy > 30 && l.accuracy < 3000) {
+      L.circle([l.lat, l.lng], { radius: l.accuracy, color: me ? "#2e7d32" : "#0b5cab", weight: 1, fillOpacity: 0.08 }).addTo(mapLayer);
+    }
+  }
+  // Zoom to everyone when opened; later updates keep the driver's own zoom.
+  if (!mapFitted && fresh.length) {
+    mapFitted = true;
+    if (fresh.length === 1) map.setView([fresh[0].lat, fresh[0].lng], 14);
+    else map.fitBounds(fresh.map((l) => [l.lat, l.lng]), { padding: [48, 48], maxZoom: 15 });
+  }
+}
+
+$("map").addEventListener("click", (e) => {
+  const nav = e.target.closest("[data-map-nav]");
+  const l = nav && locations.find((x) => x.id === nav.dataset.mapNav);
+  if (l) showOnMap(l);
 });
 
 $("delete-location").addEventListener("click", () => {

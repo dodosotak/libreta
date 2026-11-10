@@ -80,8 +80,42 @@ data class Vehicle(
     val plate: String,
     val name: String = "",
     val active: Boolean = true,
+    /** Last valid day of each tracked deadline (STK, insurance…); a deadline that isn't tracked is missing. */
+    val deadlines: Map<VehicleDeadline, LocalDate> = emptyMap(),
 ) {
     val label: String get() = if (name.isBlank()) plate else "$plate · $name"
+
+    /** Deadlines that ran out or end within [VehicleDeadline.WARN_DAYS] days, soonest first. */
+    fun warnings(today: LocalDate): List<Pair<VehicleDeadline, LocalDate>> =
+        if (!active) emptyList()
+        else deadlines.entries.filter { !it.value.isAfter(today.plusDays(VehicleDeadline.WARN_DAYS)) }
+            .sortedBy { it.value }.map { it.key to it.value }
+}
+
+/** What runs out on a vehicle; [key] is the field in vehicles/{id}.deadlines. */
+enum class VehicleDeadline(val key: String, val label: String) {
+    STK("stk", "STK"),
+    EK("ek", "Emisná kontrola"),
+    PZP("pzp", "PZP"),
+    KASKO("kasko", "Havarijné poistenie"),
+    VIGNETTE("vignette", "Diaľničná známka");
+
+    companion object {
+        /** The owner is warned this many days ahead. */
+        const val WARN_DAYS = 30L
+
+        fun byKey(key: String) = entries.firstOrNull { it.key == key }
+
+        /** "STK o 12 dní (24.11.2026)", "STK prepadla 3.11.2026", "STK končí dnes". */
+        fun text(deadline: VehicleDeadline, date: LocalDate, today: LocalDate): String {
+            val days = java.time.temporal.ChronoUnit.DAYS.between(today, date)
+            return when {
+                days < 0 -> "⛔ ${deadline.label} prepadla ${date.format(Fmt.DATE)}"
+                days == 0L -> "⚠ ${deadline.label} končí dnes"
+                else -> "⚠ ${deadline.label} o ${Fmt.count(days.toInt(), "deň", "dni", "dní")} (${date.format(Fmt.DATE)})"
+            }
+        }
+    }
 }
 
 /** [byHours]: may be entered in hours (a doctor's visit often takes only part of a day). [short] is for table columns. */

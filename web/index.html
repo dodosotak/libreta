@@ -13,7 +13,10 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="leaflet/leaflet.css">
   <link rel="stylesheet" href="style.css">
+  <!-- Leaflet 1.9.4 (maps for "Mapa vodičov"); a classic script, so the global L exists before the app module runs. -->
+  <script src="leaflet/leaflet.js"></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -79,6 +82,7 @@
       <button id="send-location" class="vacation-button">📍  Poslať moju polohu</button>
       <p id="own-location" class="since"></p>
       <button id="delete-location" class="link-button" hidden>Zmazať moju polohu</button>
+      <button id="show-map" class="vacation-button">🗺  Zobraziť všetkých na mape</button>
       <ul id="location-list" class="entries"></ul>
       <p id="locations-empty" class="empty" hidden></p>
     </section>
@@ -100,6 +104,16 @@
 
     <p id="offline" class="offline" hidden>Si offline – smeny sa odošlú po pripojení.</p>
   </main>
+
+  <!-- Everyone's last position on one map (OpenStreetMap). -->
+  <div id="map-screen" class="map-screen" hidden>
+    <header class="map-bar">
+      <button id="map-close" class="icon-button" aria-label="Zavrieť">‹</button>
+      <h2>Mapa vodičov</h2>
+    </header>
+    <div id="map"></div>
+    <p id="map-empty" class="map-empty" hidden>Za posledných 8 hodín nikto neposlal polohu.</p>
+  </div>
 
   <dialog id="dialog">
     <form method="dialog" id="dialog-form">

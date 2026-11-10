@@ -149,14 +149,24 @@ object Repo {
         db.collection("vehicles").addSnapshotListener { snap, e ->
             if (e != null) return@addSnapshotListener listenFailed(e)
             onChange(
-                snap!!.documents.map {
-                    Vehicle(it.id, it.getString("plate").orEmpty(), it.getString("name").orEmpty(), it.getBoolean("active") ?: true)
-                }.sortedWith(compareBy<Vehicle> { !it.active }.thenBy { it.plate })
+                snap!!.documents.map(::toVehicle).sortedWith(compareBy<Vehicle> { !it.active }.thenBy { it.plate })
             )
         }
 
+    private fun toVehicle(doc: DocumentSnapshot): Vehicle {
+        val deadlines = (doc.get("deadlines") as? Map<*, *>).orEmpty().mapNotNull { (key, value) ->
+            val deadline = VehicleDeadline.byKey(key.toString()) ?: return@mapNotNull null
+            val date = runCatching { LocalDate.parse(value.toString()) }.getOrNull() ?: return@mapNotNull null
+            deadline to date
+        }.toMap()
+        return Vehicle(doc.id, doc.getString("plate").orEmpty(), doc.getString("name").orEmpty(), doc.getBoolean("active") ?: true, deadlines)
+    }
+
     fun saveVehicle(vehicle: Vehicle) {
-        val data = mapOf("plate" to vehicle.plate, "name" to vehicle.name, "active" to vehicle.active)
+        val data = mapOf(
+            "plate" to vehicle.plate, "name" to vehicle.name, "active" to vehicle.active,
+            "deadlines" to vehicle.deadlines.entries.associate { it.key.key to it.value.toString() },
+        )
         val collection = db.collection("vehicles")
         val task = if (vehicle.id.isEmpty()) collection.add(data) else collection.document(vehicle.id).set(data)
         task.addOnFailureListener(::report)
@@ -474,6 +484,29 @@ object Repo {
             if (e != null) return@addSnapshotListener listenFailed(e)
             onChange(snap!!.documents.mapNotNull(::toDelivery).sortedBy { it.order })
         }
+
+    /** One read of a day's deliveries (for copying them to another day). */
+    fun getDeliveries(date: LocalDate, onResult: (List<Delivery>?) -> Unit) {
+        deliveries.whereEqualTo("date", date.toString()).get()
+            .addOnSuccessListener { snap -> onResult(snap.documents.mapNotNull(::toDelivery).sortedBy { it.order }) }
+            .addOnFailureListener { e -> report(e); onResult(null) }
+    }
+
+    /** The owner copies deliveries (e.g. yesterday's regular runs) to [date] as new free ones, in the same order. */
+    fun copyDeliveries(source: List<Delivery>, date: LocalDate) {
+        val batch = db.batch()
+        val now = System.currentTimeMillis()
+        source.forEachIndexed { i, d ->
+            batch.set(
+                deliveries.document(), mapOf(
+                    "date" to date.toString(), "title" to d.title, "place" to d.place, "note" to d.note,
+                    "order" to now + i, "status" to DeliveryStatus.OPEN.name,
+                    "driverId" to null, "driverName" to null, "takenAt" to null, "doneAt" to null,
+                )
+            )
+        }
+        batch.commit().addOnFailureListener(::report)
+    }
 
     /** Deliveries not delivered yet, of any day – drivers also see ones left over from an earlier day. */
     fun listenUnfinishedDeliveries(onChange: (List<Delivery>) -> Unit): ListenerRegistration =

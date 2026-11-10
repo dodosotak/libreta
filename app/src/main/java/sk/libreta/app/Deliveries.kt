@@ -168,6 +168,61 @@ class DeliveriesFragment : Fragment(R.layout.fragment_deliveries) {
         val fab = view.findViewById<FloatingActionButton>(R.id.fab)
         fab.visibility = if (Session.canEdit(requireContext())) View.VISIBLE else View.GONE
         fab.setOnClickListener { showDeliveryDialog(requireContext(), date, null) }
+        val copy = view.findViewById<View>(R.id.copy)
+        copy.visibility = if (Session.canEdit(requireContext())) View.VISIBLE else View.GONE
+        copy.setOnClickListener { pickCopySource() }
+    }
+
+    /** Which day to copy from – the day before the shown one is offered first. */
+    private fun pickCopySource() {
+        val target = date
+        val source = target.minusDays(1)
+        DatePickerDialog(requireContext(), { _, y, m, d -> chooseToCopy(LocalDate.of(y, m + 1, d), target) },
+            source.year, source.monthValue - 1, source.dayOfMonth).apply {
+            setTitle("Skopírovať zásielky z dňa…")
+        }.show()
+    }
+
+    /**
+     * Lists [source]'s deliveries to copy to [target] (all ticked, except ones already there with the same shops and place),
+     * and copies the chosen ones as new free deliveries.
+     */
+    private fun chooseToCopy(source: LocalDate, target: LocalDate) {
+        if (source == target) {
+            Toast.makeText(requireContext(), "Vyberte iný deň, než na ktorý kopírujete.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Repo.getDeliveries(source) { list ->
+            val context = context ?: return@getDeliveries
+            if (list == null) return@getDeliveries
+            if (list.isEmpty()) {
+                MaterialAlertDialogBuilder(context)
+                    .setMessage("${source.format(Fmt.DAY)} nie sú žiadne zásielky.")
+                    .setPositiveButton("Vybrať iný deň") { _, _ -> pickCopySource() }
+                    .setNegativeButton("Zrušiť", null)
+                    .show()
+                return@getDeliveries
+            }
+            val present = adapter.items.map { it.title.trim().lowercase() to it.place.trim().lowercase() }.toSet()
+            val already = list.map { (it.title.trim().lowercase() to it.place.trim().lowercase()) in present }
+            val checked = already.map { !it }.toBooleanArray()
+            val labels = list.mapIndexed { i, d ->
+                listOfNotNull(d.title, d.place.ifBlank { null }?.let { "→ $it" }, if (already[i]) "(už je)" else null).joinToString(" ")
+            }.toTypedArray()
+            val dialog = MaterialAlertDialogBuilder(context)
+                .setTitle("Z ${source.format(Fmt.DAY)} na ${target.format(Fmt.DAY)}")
+                .setMultiChoiceItems(labels, checked) { _, which, on -> checked[which] = on }
+                .setPositiveButton("Skopírovať", null)
+                .setNegativeButton("Zrušiť", null)
+                .show()
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val chosen = list.filterIndexed { i, _ -> checked[i] }
+                if (chosen.isEmpty()) return@setOnClickListener
+                Repo.copyDeliveries(chosen, target)
+                Toast.makeText(context, "Skopírované: ${Fmt.count(chosen.size, "zásielka", "zásielky", "zásielok")}", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  Drivers' map for the Android app (DriversMapActivity). Leaflet + OpenStreetMap tiles, no API key.
+  The activity inlines leaflet.css/js below and calls setPeople(json) whenever the positions change;
+  taps on "Navigovať" / "Zavolať" go back to the app as libreta://map?id=… and libreta://call?id=….
+-->
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <style>/*LEAFLET_CSS*/</style>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    body { font: 15px/1.35 system-ui, -apple-system, Roboto, sans-serif; }
+    .pin { display: flex; flex-direction: column; align-items: center; transform: translateY(-6px); }
+    .pin .dot {
+      width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .45); background: #0b5cab;
+    }
+    .pin.me .dot { background: #2e7d32; }
+    .pin.old .dot { background: #8a8f98; }
+    .pin .label {
+      margin-top: 3px; padding: 1px 6px; border-radius: 8px; white-space: nowrap;
+      background: rgba(255, 255, 255, .92); color: #111; font-size: 12px; font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+    }
+    .popup b { font-size: 16px; }
+    .popup .sub { color: #555; margin: 2px 0 8px; }
+    .popup a {
+      display: inline-block; margin: 2px 6px 2px 0; padding: 7px 12px; border-radius: 10px;
+      background: #0b5cab; color: #fff !important; text-decoration: none; font-weight: 600;
+    }
+    .popup a.call { background: #2e7d32; }
+    #empty {
+      position: absolute; z-index: 1000; left: 16px; right: 16px; top: 16px; padding: 12px 14px; border-radius: 12px;
+      background: rgba(255, 255, 255, .95); box-shadow: 0 1px 6px rgba(0, 0, 0, .25); text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="empty" hidden>Za posledných 8 hodín nikto neposlal polohu.</div>
+  <script>/*LEAFLET_JS*/</script>
+  <script>
+    // Slovakia until the first positions arrive.
+    const map = L.map("map", { zoomControl: true }).setView([48.67, 19.7], 7);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "© OpenStreetMap",
+    }).addTo(map);
+    const layer = L.layerGroup().addTo(map);
+    let fitted = false;
+
+    const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    /** people: [{id, name, lat, lng, accuracy, age, phone, me, old}] – see DriversMapActivity.push(). */
+    window.setPeople = (people) => {
+      layer.clearLayers();
+      document.getElementById("empty").hidden = people.length > 0;
+      for (const p of people) {
+        const cls = ["pin", p.me ? "me" : "", p.old ? "old" : ""].join(" ");
+        const icon = L.divIcon({
+          className: "", iconSize: null,
+          html: `<div class="${cls}"><div class="dot"></div><div class="label">${esc(p.me ? "Ty" : p.name)}</div></div>`,
+        });
+        const id = encodeURIComponent(p.id);
+        const popup = `<div class="popup"><b>${esc(p.me ? "Ty" : p.name)}</b><div class="sub">${esc(p.age)}</div>`
+          + (p.me ? "" : `<a href="libreta://map?id=${id}">Navigovať</a>`)
+          + (p.phone && !p.me ? `<a class="call" href="libreta://call?id=${id}">Zavolať</a>` : "")
+          + `</div>`;
+        L.marker([p.lat, p.lng], { icon }).bindPopup(popup).addTo(layer);
+        if (p.accuracy > 30 && p.accuracy < 3000) {
+          L.circle([p.lat, p.lng], { radius: p.accuracy, color: p.me ? "#2e7d32" : "#0b5cab", weight: 1, fillOpacity: .08 }).addTo(layer);
+        }
+      }
+      // Zoom to everyone once; later updates keep the driver's own zoom and position.
+      if (!fitted && people.length) {
+        fitted = true;
+        if (people.length === 1) map.setView([people[0].lat, people[0].lng], 14);
+        else map.fitBounds(people.map((p) => [p.lat, p.lng]), { padding: [48, 48], maxZoom: 15 });
+      }
+    };
+  </script>
+</body>
+</html>

@@ -44,6 +44,11 @@
             android:label="Polohy vodičov" />
 
         <activity
+            android:name=".DriversMapActivity"
+            android:label="Mapa vodičov"
+            android:parentActivityName=".LocationsActivity" />
+
+        <activity
             android:name=".VehiclesActivity"
             android:parentActivityName=".MainActivity" />
 

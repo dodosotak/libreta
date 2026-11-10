@@ -195,6 +195,7 @@ class LocationsActivity : AppCompatActivity() {
         stop = findViewById(R.id.stop)
         findViewById<View>(R.id.own).visibility = if (driverId == null) View.GONE else View.VISIBLE
         send.setOnClickListener { sendLocation() }
+        findViewById<View>(R.id.show_map).setOnClickListener { DriversMapActivity.open(this, office = driverId == null) }
         stop.setOnClickListener { driverId?.let(Repo::deleteLocation) }
         auto = findViewById(R.id.auto)
         auto.isChecked = LocationService.isEnabled(this)

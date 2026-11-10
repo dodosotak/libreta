@@ -53,6 +53,18 @@
             android:visibility="gone" />
     </LinearLayout>
 
+    <!-- Everyone's position on one map (DriversMapActivity); for the driver and the office. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/show_map"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="24dp"
+        android:text="Zobraziť všetkých na mape"
+        app:icon="@drawable/ic_map" />
+
     <include
         layout="@layout/fragment_list"
         android:layout_width="match_parent"
