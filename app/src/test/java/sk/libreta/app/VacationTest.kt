@@ -36,6 +36,12 @@ class VacationTest {
         assertEquals("4,5", Vacation.days(4.5))
         assertEquals("8", Vacation.days(8.0))
         assertNull(Vacation.left(anna.copy(type = WorkerType.PART_TIME), emptyList(), 2026))
+        // a brigádnik has no vacation and no doctor's visits (P-čko)
+        assertEquals(
+            listOf(AbsenceType.SICK, AbsenceType.CARE, AbsenceType.COMP_OFF, AbsenceType.UNPAID),
+            anna.copy(type = WorkerType.PART_TIME).absenceTypes,
+        )
+        assertEquals(AbsenceType.entries, anna.absenceTypes)
     }
 
     @Test

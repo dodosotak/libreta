@@ -405,9 +405,13 @@ fun showRequestDecisionDialog(context: Context, absence: Absence, driver: Driver
 fun dateRange(absence: Absence): String =
     if (absence.from == absence.to) absence.from.format(Fmt.DATE) else "${absence.from.format(Fmt.DATE)} – ${absence.to.format(Fmt.DATE)}"
 
-/** The owner records a vacation, sick leave etc. for a range of days. */
-fun showAbsenceDialog(context: Context, driverId: String, existing: Absence?, defaultDate: LocalDate) {
-    var type = existing?.type ?: AbsenceType.VACATION
+/**
+ * The owner records a vacation, sick leave etc. for a range of days. [driver] limits the choice ([Driver.absenceTypes]):
+ * a brigádnik has no vacation and no doctor's visits.
+ */
+fun showAbsenceDialog(context: Context, driverId: String, driver: Driver?, existing: Absence?, defaultDate: LocalDate) {
+    val types = driver?.absenceTypes ?: AbsenceType.entries
+    var type = existing?.type ?: types.first()
     var from = existing?.from ?: defaultDate
     var to = existing?.to ?: defaultDate
     val typeButton = pickerButton(context, R.drawable.ic_label)
@@ -442,7 +446,7 @@ fun showAbsenceDialog(context: Context, driverId: String, existing: Absence?, de
     typeButton.setOnClickListener {
         MaterialAlertDialogBuilder(context)
             .setTitle("Druh neprítomnosti")
-            .setItems(AbsenceType.entries.map { it.label }.toTypedArray()) { _, which -> type = AbsenceType.entries[which]; refresh() }
+            .setItems(types.map { it.label }.toTypedArray()) { _, which -> type = types[which]; refresh() }
             .show()
     }
     fromButton.setOnClickListener {

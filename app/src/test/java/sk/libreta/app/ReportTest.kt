@@ -73,8 +73,8 @@ class ReportTest {
     @Test
     fun csvUsesDecimalCommaAndEscapesNames() {
         val csv = Report.csv(october, Report.summarize(october, listOf(anna, boris), shifts, absences), shifts, absences)
-        assertTrue(csv.contains("Anna Nová;Zamestnanec;2;12:15;12,25;4,25;2,25;0,00;0,00;0,00;4,25;1;5;0;0;0;0;250;;110,00;10,00;152,50;40;22;176,00;40,00;\r\n"))
-        assertTrue(csv.contains("\"Boris; Brigáda\";Brigádnik;1;4:00;4,00;0,00;0,00;0,00;0,00;0,00;0,00;1;0;0;0;0;0;0;6,50;;;26,00;;;;;\r\n"))
+        assertTrue(csv.contains("Anna Nová;Zamestnanec;2;12:15;12,25;4,25;2,25;0,00;0,00;0,00;4,25;1;5;0;0;0;0;0,00;0,00;250;;110,00;10,00;152,50;40;22;176,00;40,00;\r\n"))
+        assertTrue(csv.contains("\"Boris; Brigáda\";Brigádnik;1;4:00;4,00;0,00;0,00;0,00;0,00;0,00;0,00;1;0;0;0;0;0;0,00;0,00;0;6,50;;;26,00;;;;;\r\n"))
         assertTrue(csv.contains("\"Boris; Brigáda\";Brigádnik"))
         assertTrue(csv.contains("SPOLU;;3;16:15;16,25;"))
         assertTrue(csv.contains("3.10.2026 02:15"))

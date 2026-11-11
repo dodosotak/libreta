@@ -70,8 +70,12 @@ data class Driver(
     /** Employees whose day or night rate is missing would be paid 0 for those hours. */
     val rateMissing: Boolean get() = type == WorkerType.EMPLOYEE && (dayRate == null || nightRate == null)
 
-    /** Workers on an agreement (dohoda) have no paid vacation. */
+    /** Workers on an agreement (dohoda) have no paid vacation and no paid doctor's visits (P-čko). */
     val hasVacation: Boolean get() = type == WorkerType.EMPLOYEE
+
+    /** Absences that can be recorded for this worker: a brigádnik has no vacation and no doctor's visits. */
+    val absenceTypes: List<AbsenceType>
+        get() = if (hasVacation) AbsenceType.entries else AbsenceType.entries.filter { it != AbsenceType.VACATION && !it.byHours }
 }
 
 data class Vehicle(

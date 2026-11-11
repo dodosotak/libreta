@@ -52,7 +52,7 @@ class ShiftsActivity : AppCompatActivity() {
                     if (entry.status == AbsenceStatus.PENDING && d != null) {
                         showRequestDecisionDialog(this, entry, d, vacationLeft(), vacationAbsences)
                     } else {
-                        showAbsenceDialog(this, driverId, entry, entry.from)
+                        showAbsenceDialog(this, driverId, driver, entry, entry.from)
                     }
                 }
             }
@@ -78,9 +78,9 @@ class ShiftsActivity : AppCompatActivity() {
             val today = LocalDate.now()
             val date = if (YearMonth.from(today) == month) today else month.atDay(1)
             MaterialAlertDialogBuilder(this)
-                .setItems(arrayOf("Smena", "Neprítomnosť (dovolenka, PN…)")) { _, which ->
+                .setItems(arrayOf("Smena", if (driver?.hasVacation == false) "Neprítomnosť (PN, OČR…)" else "Neprítomnosť (dovolenka, PN…)")) { _, which ->
                     if (which == 0) showShiftDialog(this, driverId, null, date, vehicles)
-                    else showAbsenceDialog(this, driverId, null, date)
+                    else showAbsenceDialog(this, driverId, driver, null, date)
                 }
                 .show()
         }
